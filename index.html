@@ -606,6 +606,11 @@
 
   <div class="wizard-step" id="wizStep2" style="display:none;">
     <p class="step-intro">Schritt 2: Trag die Aufstellung des Heimvereins ein (bei Doppel/Mixed 2 Spieler pro Feld).</p>
+    <div class="toolbar" style="margin-bottom:14px;">
+      <button class="btn-secondary" onclick="exportHeimAufstellung()">⬇️ Aufstellung speichern</button>
+      <button class="btn-secondary" onclick="triggerImportAufstellung()">⬆️ Aufstellung laden</button>
+      <input type="file" id="importAufstellungInput" accept="application/json,.json" style="display:none" onchange="handleImportAufstellungFile(this)">
+    </div>
   </div>
 
   <div class="wizard-step" id="wizStep3" style="display:none;">
@@ -672,7 +677,6 @@
     <div class="toolbar" style="margin-top:12px;">
       <button class="btn-secondary" onclick="exportData()">⬇️ Exportieren</button>
       <button class="btn-secondary" onclick="triggerImport()">⬆️ Importieren</button>
-      <button class="btn-secondary" onclick="window.print()">🖨️ Drucken</button>
       <input type="file" id="importFileInput" accept="application/json,.json" style="display:none" onchange="handleImportFile(this)">
     </div>
     <button class="btn-secondary" style="width:100%;margin-top:16px;" onclick="createNewReport()">➕ Neuen Bericht starten</button>
@@ -1413,6 +1417,63 @@ function exportData(){
   setStatus('Exportiert ✓');
 }
 
+// ---- Nur die Heim-Aufstellung speichern/laden (Schritt 2) - spart Tipparbeit bei wiederkehrendem Kader ----
+function exportHeimAufstellung(){
+  const rows = [...tbody.children].map(tr => {
+    const row = {};
+    tr.querySelectorAll('input[data-field]').forEach(input => {
+      const field = input.dataset.field || '';
+      if(field.startsWith('heimNamen')) row[field] = input.value;
+    });
+    return row;
+  });
+  const heim = document.getElementById('heimverein').value || 'Heimverein';
+  const clean = s => (s || '').trim().replace(/[^a-zA-Z0-9äöüÄÖÜß]+/g, '_').replace(/^_+|_+$/g, '');
+  const filename = `Aufstellung_${clean(heim) || 'Heimverein'}.json`.replace(/_+/g, '_');
+  const blob = new Blob([JSON.stringify({ heimverein: heim, rows }, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  setStatus('Aufstellung gespeichert ✓');
+}
+
+function triggerImportAufstellung(){
+  document.getElementById('importAufstellungInput').click();
+}
+
+function handleImportAufstellungFile(fileInput){
+  const file = fileInput.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    try{
+      const data = JSON.parse(e.target.result);
+      (data.rows || []).forEach((rowData, i) => {
+        const tr = tbody.children[i];
+        if(!tr) return;
+        Object.keys(rowData).forEach(field => {
+          if(!field.startsWith('heimNamen')) return;
+          const input = tr.querySelector(`[data-field=${field}]`);
+          if(input) input.value = rowData[field];
+        });
+      });
+      computeAll();
+      scheduleAutosave();
+      setStatus('Aufstellung geladen ✓');
+    } catch(err){
+      setStatus('Datei konnte nicht gelesen werden.');
+    }
+    fileInput.value = '';
+  };
+  reader.onerror = () => setStatus('Datei konnte nicht gelesen werden.');
+  reader.readAsText(file);
+}
+
 let lastExportedPdf = null; // { blob, filename } des zuletzt erstellten PDFs, für die Teilen-Funktion
 
 // Erstellt das PDF und liefert { blob, filename } zurück, oder null bei Fehler (mit Alert-Meldung)
@@ -1474,14 +1535,22 @@ async function generatePdfBlob(){
   });
   const origCanvases = sheet.querySelectorAll('canvas.signature-pad');
   const cloneCanvases = exportClone.querySelectorAll('canvas.signature-pad');
-  origCanvases.forEach((orig, i) => {
+  await Promise.all([...origCanvases].map((orig, i) => new Promise(resolve => {
     const cCanvas = cloneCanvases[i];
-    if(!cCanvas) return;
-    cCanvas.width = orig.width;
-    cCanvas.height = orig.height;
-    const cCtx = cCanvas.getContext('2d');
-    cCtx.drawImage(orig, 0, 0);
-  });
+    if(!cCanvas){ resolve(); return; }
+    const img = document.createElement('img');
+    img.onload = resolve;
+    img.onerror = resolve; // notfalls trotzdem weitermachen, statt den ganzen Export zu blockieren
+    img.src = orig.toDataURL('image/png');
+    img.style.width = '100%';
+    img.style.height = orig.getBoundingClientRect().height + 'px';
+    img.style.display = 'block';
+    img.style.border = '1px solid #c9d2de';
+    img.style.borderRadius = '6px';
+    img.style.background = '#fdfdfd';
+    img.className = cCanvas.className;
+    cCanvas.replaceWith(img);
+  })));
 
   exportClone.style.position = 'fixed';
   exportClone.style.top = '0';
