@@ -607,7 +607,6 @@
   <div class="wizard-step" id="wizStep2" style="display:none;">
     <p class="step-intro">Schritt 2: Trag die Aufstellung des Heimvereins ein (bei Doppel/Mixed 2 Spieler pro Feld).</p>
     <div class="toolbar" style="margin-bottom:14px;">
-      <button class="btn-secondary" onclick="exportHeimAufstellung()">⬇️ Aufstellung speichern</button>
       <button class="btn-secondary" onclick="triggerImportAufstellung()">⬆️ Aufstellung laden</button>
       <input type="file" id="importAufstellungInput" accept="application/json,.json" style="display:none" onchange="handleImportAufstellungFile(this)">
     </div>
@@ -640,6 +639,9 @@
     <tbody id="tbody"></tbody>
   </table>
 
+  <button type="button" id="saveAufstellungBtn" class="btn-secondary btn-finish" style="display:none;" onclick="exportHeimAufstellung()">⬇️ Aufstellung speichern</button>
+  <button type="button" id="step3ForwardBtn" class="btn-primary btn-finish" style="display:none;" onclick="wizardNext()">Weiter →</button>
+
   <div id="summaryWrapper" style="display:none;">
     <div class="summary">
       <div class="club" id="summaryHeim">Heimverein</div>
@@ -649,6 +651,8 @@
     <div class="winner-banner" id="summaryBaelle">Ballpunkte: 0 : 0</div>
     <div class="winner-banner" id="winnerBanner"></div>
   </div>
+
+  <button type="button" id="step4ForwardBtn" class="btn-primary btn-finish" style="display:none;" onclick="wizardNext()">Weiter →</button>
 
   <div class="wizard-step" id="wizStep5" style="display:none;">
     <p class="step-intro">Schritt 5: Prüft das Ergebnis gemeinsam und unterschreibt zum Abschluss.</p>
@@ -1017,7 +1021,7 @@ function applyGuestRestrictions(){
   if(typeof refreshSignaturePads === 'function') refreshSignaturePads();
 
   // Berichtsverwaltung und Teilen-Funktion sind für den Gast ausgeblendet
-  const toHide = ['.report-bar', '#shareBtn', '#handoverBtn'];
+  const toHide = ['.report-bar', '#shareBtn', '#handoverBtn', '#saveAufstellungBtn', '#step3ForwardBtn', '#step4ForwardBtn'];
   toHide.forEach(sel => {
     document.querySelectorAll(sel).forEach(el => el.style.display = 'none');
   });
@@ -1488,7 +1492,7 @@ async function generatePdfBlob(){
 
   // Für den Export alles sichtbar machen: alle Spiele, alle Inhalts-Schritte, volle Tabelle
   [...tbody.children].forEach(tr => tr.classList.remove('collapsed'));
-  const hiddenEls = document.querySelectorAll('.wizard-nav, .reset-link-row, .status, .report-bar, .guest-banner, #shareBtn, #handoverBtn, .step-intro, #wizStep3, #wizStep6');
+  const hiddenEls = document.querySelectorAll('.wizard-nav, .reset-link-row, .status, .report-bar, .guest-banner, #shareBtn, #handoverBtn, #saveAufstellungBtn, #step3ForwardBtn, #step4ForwardBtn, .step-intro, #wizStep3, #wizStep6');
   hiddenEls.forEach(el => el.style.display = 'none');
   for(const s of [1, 2, 4, 5]){
     const el = document.getElementById('wizStep' + s);
@@ -1713,6 +1717,9 @@ function renderWizard(){
     table.style.display = 'none';
   }
   summaryWrapper.style.display = (currentStep === 4 || currentStep === 5) ? 'block' : 'none';
+  document.getElementById('saveAufstellungBtn').style.display = (currentStep === 2) ? 'block' : 'none';
+  document.getElementById('step3ForwardBtn').style.display = (currentStep === 3) ? 'block' : 'none';
+  document.getElementById('step4ForwardBtn').style.display = (currentStep === 4) ? 'block' : 'none';
 
   document.getElementById('wizProgressText').textContent = `Schritt ${currentStep} von ${TOTAL_STEPS}: ${STEP_TITLES[currentStep]}`;
   document.getElementById('wizProgressFill').style.width = (currentStep / TOTAL_STEPS * 100) + '%';
