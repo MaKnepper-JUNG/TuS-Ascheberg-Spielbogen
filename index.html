@@ -500,7 +500,10 @@
     font-size:12px;
     min-height:32px;
   }
+  #printLayout{display:none;}
+
   @media print{
+    @page{ size: landscape; margin: 10mm; }
     *{
       box-shadow:none !important;
       transition:none !important;
@@ -508,22 +511,71 @@
       border-radius:0 !important;
     }
     body{background:#fff;padding:0;}
-    .toolbar,.status,.wizard-nav,.reset-link-row,.report-bar,.guest-banner,
-    #shareBtn,#handoverBtn,#handoverBtnBottom,#saveAufstellungBtn,
-    #step2ForwardBtn,#step3ForwardBtn,#step4ForwardBtn,#step2ImportToolbar,
-    .step-intro{display:none !important;}
-    .wizard-step{display:block !important;}
-    #wizStep3, #wizStep6{display:none !important;}
-    table#matchTable{display:table !important;}
-    table#matchTable.mode-names td[data-label],
-    table#matchTable.mode-gast-entry td[data-label]{display:flex !important;}
-    #summaryWrapper{display:block !important;}
-    tbody tr.collapsed td:not(.pos-cell){display:flex !important;}
-    tbody tr, .signature-block{
-      break-inside:avoid;
-      page-break-inside:avoid;
+    /* Die normale Bildschirm-Oberfläche komplett ausblenden, nur das offizielle Layout drucken */
+    .sheet > *{display:none !important;}
+    .sheet{box-shadow:none;border:none;padding:0;max-width:none;}
+    #printLayout{display:block !important;}
+
+    .print-title{
+      font-size:16px;
+      margin:0 0 8px;
+      text-align:center;
     }
-    .sheet{box-shadow:none;border:none;}
+    .print-meta-table, .print-match-table, .print-sig-table{
+      width:100%;
+      border-collapse:collapse;
+      font-size:10px;
+      margin-bottom:4px;
+    }
+    .print-meta-table td{
+      border:1px solid #000;
+      padding:3px 5px;
+      vertical-align:top;
+    }
+    .print-match-table th, .print-match-table td{
+      border:1px solid #000;
+      padding:3px 4px;
+      text-align:center;
+      vertical-align:middle;
+      font-size:9.5px;
+    }
+    .print-match-table td.print-name-cell{
+      text-align:left;
+      min-height:26px;
+    }
+    .print-match-table td.print-name-cell div{
+      min-height:12px;
+    }
+    .print-declaration{
+      font-size:9px;
+      margin:4px 0;
+    }
+    .print-sig-table td{
+      width:50%;
+      text-align:center;
+      vertical-align:bottom;
+      padding-top:4px;
+    }
+    .print-sig-area{
+      height:50px;
+      border-bottom:1px solid #000;
+      display:flex;
+      align-items:flex-end;
+      justify-content:center;
+    }
+    .print-sig-area img{
+      max-height:48px;
+      max-width:90%;
+    }
+    .print-sig-caption{
+      font-size:9px;
+      margin-top:2px;
+    }
+    .print-footnote{
+      font-size:8px;
+      text-align:right;
+      margin-top:4px;
+    }
   }
   @media (max-width:700px){
     body{padding:10px;}
@@ -609,6 +661,7 @@
       </div>
       <div class="field"><label>Gastverein</label><input type="text" id="gastverein" placeholder="z. B. BC Beispieldorf"></div>
       <div class="field"><label>Gruppe bzw. Spiel-Nr.</label><input type="text" id="gruppe"></div>
+      <div class="field"><label>Staffel-Nr.</label><input type="text" id="staffelnr"></div>
       <div class="field"><label>Austragungsort</label>
         <select id="ort">
           <option value="">– bitte wählen –</option>
@@ -617,6 +670,9 @@
         </select>
       </div>
       <div class="field"><label>Datum</label><input type="text" id="datum" placeholder="TT.MM.JJJJ"></div>
+      <div class="field"><label>Beginn</label><input type="text" id="beginn" placeholder="z. B. 17:00"></div>
+      <div class="field"><label>Spieltag</label><input type="text" id="spieltag"></div>
+      <div class="field"><label>Uhrzeit</label><input type="text" id="uhrzeit" placeholder="z. B. 17:00"></div>
     </div>
   </div>
 
@@ -700,6 +756,78 @@
   </div>
 
   <div class="status" id="status"></div>
+
+  <div id="printLayout">
+    <h2 class="print-title">Mannschaftsspielbericht U19/O19</h2>
+    <table class="print-meta-table">
+      <tr>
+        <td>Bezeichnung der Staffel:<br><strong id="printStaffel">&nbsp;</strong></td>
+        <td>Staffel-Nr.:<br><strong id="printStaffelnr">&nbsp;</strong></td>
+      </tr>
+      <tr>
+        <td>Heimverein:<br><strong id="printHeimverein">&nbsp;</strong></td>
+        <td>Gastverein:<br><strong id="printGastverein">&nbsp;</strong></td>
+        <td>Datum:<br><strong id="printDatum">&nbsp;</strong></td>
+        <td>Beginn:<br><strong id="printBeginn">&nbsp;</strong></td>
+      </tr>
+      <tr>
+        <td colspan="2">Ort und Hallenbezeichnung der Austragungsstätte:<br><strong id="printOrt">&nbsp;</strong></td>
+        <td>Spieltag:<br><strong id="printSpieltag">&nbsp;</strong></td>
+        <td>Uhrzeit:<br><strong id="printUhrzeit">&nbsp;</strong></td>
+      </tr>
+    </table>
+
+    <table class="print-match-table">
+      <thead>
+        <tr>
+          <th rowspan="2">Spielfolge<br>Disziplin</th>
+          <th rowspan="2">Heimverein<br>Name und Vorname</th>
+          <th rowspan="2">Gastverein<br>Name und Vorname</th>
+          <th colspan="3">Sätze</th>
+          <th colspan="2">Punkte</th>
+          <th colspan="2">Sätze</th>
+          <th colspan="2">Spiele</th>
+        </tr>
+        <tr>
+          <th>1.</th><th>2.</th><th>3.</th>
+          <th>Heim</th><th>Gast</th>
+          <th>Heim</th><th>Gast</th>
+          <th>Heim</th><th>Gast</th>
+        </tr>
+      </thead>
+      <tbody id="printTbody"></tbody>
+    </table>
+
+    <table class="print-meta-table" style="margin-top:6px;">
+      <tr>
+        <td>Sieger:<br><strong id="printSieger">&nbsp;</strong></td>
+        <td>Ergebnis:<br><strong id="printErgebnis">&nbsp;</strong></td>
+      </tr>
+    </table>
+
+    <p class="print-declaration">Die Richtigkeit der eingetragenen Daten wird bescheinigt. Das Spiel hat unter Beachtung der zuständigen Spielordnung stattgefunden. Besondere Vorkommnisse: <span id="printNotes"></span></p>
+
+    <table class="print-sig-table">
+      <tr>
+        <td>
+          <div class="print-sig-area"><img id="printSigHeimImg" alt=""></div>
+          <div class="print-sig-caption">(Mannschaftsführer Heimmannschaft)</div>
+        </td>
+        <td>
+          <div class="print-sig-area"><img id="printSigGastImg" alt=""></div>
+          <div class="print-sig-caption">(Mannschaftsführer Gastmannschaft)</div>
+        </td>
+      </tr>
+    </table>
+
+    <table class="print-meta-table" style="margin-top:6px;">
+      <tr>
+        <td>Protestvorbehalt gem. SpO:<br><strong>&nbsp;</strong></td>
+        <td>Protestgrund:<br><strong>&nbsp;</strong></td>
+      </tr>
+    </table>
+    <p class="print-footnote">Anlage 3 der SpO</p>
+  </div>
 </div>
 
 <script type="module">
@@ -876,6 +1004,7 @@ window.addEventListener('beforeprint', () => {
   wasStepBeforePrint = currentStep;
   [...tbody.children].forEach(tr => tr.classList.remove('collapsed'));
   refreshSignaturePads();
+  populatePrintLayout();
 });
 window.addEventListener('afterprint', () => {
   applyAccordionState();
@@ -929,6 +1058,97 @@ function computeRow(tr){
   }
   if(summaryEl) summaryEl.textContent = `Sätze ${heimSets}:${gastSets}${result.winner ? ' · ' + (result.winner === 'heim' ? 'Heim' : 'Gast') : ''}`;
   return result;
+}
+
+// Füllt das offizielle Anlage-3-Layout (Querformat) mit den aktuellen Daten, direkt vor dem Drucken
+function populatePrintLayout(){
+  const val = id => document.getElementById(id).value || '';
+  document.getElementById('printStaffel').textContent = val('gruppe') || '\u00A0';
+  document.getElementById('printStaffelnr').textContent = val('staffelnr') || '\u00A0';
+  document.getElementById('printHeimverein').textContent = val('heimverein') || '\u00A0';
+  document.getElementById('printGastverein').textContent = val('gastverein') || '\u00A0';
+  document.getElementById('printDatum').textContent = val('datum') || '\u00A0';
+  document.getElementById('printBeginn').textContent = val('beginn') || '\u00A0';
+  document.getElementById('printOrt').textContent = val('ort') || '\u00A0';
+  document.getElementById('printSpieltag').textContent = val('spieltag') || '\u00A0';
+  document.getElementById('printUhrzeit').textContent = val('uhrzeit') || '\u00A0';
+  document.getElementById('printNotes').textContent = val('notes');
+
+  const printLabels = { "Mixed": "GD" }; // offizielle Bezeichnung für Mixed ist "GD" (Gemischtes Doppel)
+  const printTbody = document.getElementById('printTbody');
+  printTbody.innerHTML = '';
+
+  let heimSpiele = 0, gastSpiele = 0, heimSaetzeGes = 0, gastSaetzeGes = 0, heimPunkteGes = 0, gastPunkteGes = 0;
+
+  POSITIONS.forEach((pos, i) => {
+    const tr = tbody.children[i];
+    const isDouble = DOUBLES_INDICES.has(i);
+    const get = f => tr.querySelector(`[data-field=${f}]`);
+    const heimNamen = isDouble
+      ? [get('heimNamen1').value, get('heimNamen2').value].filter(Boolean).join('<br>')
+      : (get('heimNamen') ? get('heimNamen').value : '');
+    const gastNamen = isDouble
+      ? [get('gastNamen1').value, get('gastNamen2').value].filter(Boolean).join('<br>')
+      : (get('gastNamen') ? get('gastNamen').value : '');
+
+    const sets = [['s1h','s1g'],['s2h','s2g'],['s3h','s3g']];
+    let heimSets = 0, gastSets = 0, heimBaelle = 0, gastBaelle = 0, played = 0;
+    const satzWerte = sets.map(([hf, gf]) => {
+      const h = get(hf).value, g = get(gf).value;
+      if(h === '' || g === '') return '\u00A0';
+      const hn = parseInt(h, 10), gn = parseInt(g, 10);
+      if(isNaN(hn) || isNaN(gn)) return '\u00A0';
+      played++;
+      heimBaelle += hn; gastBaelle += gn;
+      if(hn > gn) heimSets++; else if(gn > hn) gastSets++;
+      return `${hn}:${gn}`;
+    });
+
+    let ergebnisHeim = '\u00A0', ergebnisGast = '\u00A0';
+    if(played > 0){
+      if(heimSets >= 2){ ergebnisHeim = '1'; ergebnisGast = '0'; heimSpiele++; }
+      else if(gastSets >= 2){ ergebnisHeim = '0'; ergebnisGast = '1'; gastSpiele++; }
+      heimSaetzeGes += heimSets; gastSaetzeGes += gastSets;
+      heimPunkteGes += heimBaelle; gastPunkteGes += gastBaelle;
+    }
+
+    const row = document.createElement('tr');
+    row.innerHTML = `
+      <td>${printLabels[pos] || pos}</td>
+      <td class="print-name-cell">${heimNamen || '\u00A0'}</td>
+      <td class="print-name-cell">${gastNamen || '\u00A0'}</td>
+      <td>${satzWerte[0]}</td>
+      <td>${satzWerte[1]}</td>
+      <td>${satzWerte[2]}</td>
+      <td>${played ? heimBaelle : '\u00A0'}</td>
+      <td>${played ? gastBaelle : '\u00A0'}</td>
+      <td>${played ? heimSets : '\u00A0'}</td>
+      <td>${played ? gastSets : '\u00A0'}</td>
+      <td>${ergebnisHeim}</td>
+      <td>${ergebnisGast}</td>
+    `;
+    printTbody.appendChild(row);
+  });
+
+  const heimName = val('heimverein') || 'Heimverein';
+  const gastName = val('gastverein') || 'Gastverein';
+  document.getElementById('printErgebnis').textContent = `${heimSpiele} : ${gastSpiele}`;
+  if(heimSpiele > gastSpiele){
+    document.getElementById('printSieger').textContent = heimName;
+  } else if(gastSpiele > heimSpiele){
+    document.getElementById('printSieger').textContent = gastName;
+  } else {
+    document.getElementById('printSieger').textContent = (heimSpiele + gastSpiele) > 0 ? 'Unentschieden' : '\u00A0';
+  }
+
+  const heimSigData = getSignatureData('sigHeim');
+  const gastSigData = getSignatureData('sigGast');
+  const heimSigImg = document.getElementById('printSigHeimImg');
+  const gastSigImg = document.getElementById('printSigGastImg');
+  heimSigImg.src = heimSigData || '';
+  heimSigImg.style.visibility = heimSigData ? 'visible' : 'hidden';
+  gastSigImg.src = gastSigData || '';
+  gastSigImg.style.visibility = gastSigData ? 'visible' : 'hidden';
 }
 
 function computeAll(){
@@ -1076,8 +1296,12 @@ function collectData(){
     heimverein: document.getElementById('heimverein').value,
     gastverein: document.getElementById('gastverein').value,
     gruppe: document.getElementById('gruppe').value,
+    staffelnr: document.getElementById('staffelnr').value,
     ort: document.getElementById('ort').value,
     datum: document.getElementById('datum').value,
+    beginn: document.getElementById('beginn').value,
+    spieltag: document.getElementById('spieltag').value,
+    uhrzeit: document.getElementById('uhrzeit').value,
     notes: document.getElementById('notes').value,
     heimSignatur: getSignatureData('sigHeim'),
     gastSignatur: getSignatureData('sigGast'),
@@ -1092,8 +1316,12 @@ function applyData(data){
   document.getElementById('heimverein').value = data.heimverein || '';
   document.getElementById('gastverein').value = data.gastverein || '';
   document.getElementById('gruppe').value = data.gruppe || '';
+  document.getElementById('staffelnr').value = data.staffelnr || '';
   document.getElementById('ort').value = data.ort || '';
   document.getElementById('datum').value = data.datum || '';
+  document.getElementById('beginn').value = data.beginn || '';
+  document.getElementById('spieltag').value = data.spieltag || '';
+  document.getElementById('uhrzeit').value = data.uhrzeit || '';
   document.getElementById('notes').value = data.notes || '';
   clearSignature('sigHeim');
   clearSignature('sigGast');
@@ -1279,7 +1507,7 @@ async function attachLiveSync(id){
 function handleIncomingLiveUpdate(data){
   const active = document.activeElement;
 
-  const metaIds = ['heimverein', 'gastverein', 'gruppe', 'ort', 'datum', 'notes'];
+  const metaIds = ['heimverein', 'gastverein', 'gruppe', 'staffelnr', 'ort', 'datum', 'beginn', 'spieltag', 'uhrzeit', 'notes'];
   metaIds.forEach(id => {
     const el = document.getElementById(id);
     if(el && el !== active && data[id] !== undefined && el.value !== data[id]){
