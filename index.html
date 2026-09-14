@@ -845,6 +845,20 @@ document.getElementById('heimverein').addEventListener('input', computeAll);
 document.getElementById('heimverein').addEventListener('change', computeAll);
 document.getElementById('gastverein').addEventListener('input', computeAll);
 
+// ---- Automatische Speicherung beim Tippen (lokal + Cloud), verzögert um nicht bei jedem Tastendruck zu speichern ----
+let autosaveTimer = null;
+function scheduleAutosave(){
+  clearTimeout(autosaveTimer);
+  autosaveTimer = setTimeout(async () => {
+    const ok = await persistActiveReport();
+    setStatus(ok ? 'Automatisch gespeichert ✓' : 'Automatisches Speichern nicht möglich – bitte "Exportieren" nutzen.');
+  }, 1200);
+}
+tbody.addEventListener('input', scheduleAutosave);
+document.querySelector('.meta-grid').addEventListener('input', scheduleAutosave);
+document.querySelector('.meta-grid').addEventListener('change', scheduleAutosave);
+document.getElementById('notes').addEventListener('input', scheduleAutosave);
+
 // Automatische Ergänzung des Gewinner-Satzstands (Standard: bis 21, ab 20 Zwei-Punkte-Abstand, Hard-Cap 30)
 const SET_FIELDS = ['s1h','s1g','s2h','s2g','s3h','s3g'];
 function winningScoreFor(loserScore){
