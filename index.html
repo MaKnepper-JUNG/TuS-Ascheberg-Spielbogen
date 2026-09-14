@@ -502,11 +502,17 @@
   }
   @media print{
     body{background:#fff;padding:0;}
-    .toolbar,.status,.wizard-nav,.reset-link-row,.report-bar,#shareBtn,#handoverBtn,.step-intro{display:none;}
+    .toolbar,.status,.wizard-nav,.reset-link-row,.report-bar,.guest-banner,
+    #shareBtn,#handoverBtn,#handoverBtnBottom,#saveAufstellungBtn,
+    #step2ForwardBtn,#step3ForwardBtn,#step4ForwardBtn,#step2ImportToolbar,
+    .step-intro{display:none !important;}
     .wizard-step{display:block !important;}
     #wizStep3, #wizStep6{display:none !important;}
     table#matchTable{display:table !important;}
+    table#matchTable.mode-names td[data-label],
+    table#matchTable.mode-gast-entry td[data-label]{display:flex !important;}
     #summaryWrapper{display:block !important;}
+    tbody tr.collapsed td:not(.pos-cell){display:flex !important;}
     .sheet{box-shadow:none;border:none;}
   }
   @media (max-width:700px){
@@ -678,16 +684,14 @@
 
   <div class="wizard-step" id="wizStep6" style="display:none;">
     <p class="step-intro">Schritt 6: Bericht versenden.</p>
-    <button class="btn-primary btn-finish" onclick="exportPDF()">📄 Als PDF speichern</button>
-    <button class="btn-secondary btn-finish" onclick="sharePdf()">📤 PDF teilen (AirDrop/Mail/WhatsApp)</button>
+    <button class="btn-primary btn-finish" onclick="exportPDF()">🖨️ Als PDF speichern / Teilen</button>
+    <p style="font-size:12.5px;color:#6b7686;margin:8px 0 0;">Öffnet die Druckvorschau – dort „Als PDF sichern" wählen oder über das Teilen-Symbol direkt per AirDrop/Mail versenden.</p>
     <button class="btn-secondary" style="width:100%;margin-top:16px;" onclick="createNewReport()">➕ Neuen Bericht starten</button>
   </div>
 
   <div class="status" id="status"></div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/html2canvas-pro@1.5.8/dist/html2canvas-pro.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
   import { getFirestore, doc, setDoc, getDoc, onSnapshot, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
@@ -856,11 +860,19 @@ function toggleRow(i){
 
 applyAccordionState();
 
-// Beim Drucken (auch über den systemeigenen Druckdialog) alle Spiele sichtbar machen
+// Beim Drucken (auch über den systemeigenen Druckdialog) alles sichtbar machen
+let wasStepBeforePrint = 1;
 window.addEventListener('beforeprint', () => {
+  wasStepBeforePrint = currentStep;
   [...tbody.children].forEach(tr => tr.classList.remove('collapsed'));
+  refreshSignaturePads();
 });
-window.addEventListener('afterprint', applyAccordionState);
+window.addEventListener('afterprint', () => {
+  applyAccordionState();
+  currentStep = wasStepBeforePrint;
+  renderWizard();
+  if(isGuestMode) applyGuestRestrictions();
+});
 
 function computeRow(tr){
   const get = f => tr.querySelector(`[data-field=${f}]`);
@@ -1475,196 +1487,13 @@ function handleImportAufstellungFile(fileInput){
   reader.readAsText(file);
 }
 
-let lastExportedPdf = null; // { blob, filename } des zuletzt erstellten PDFs, für die Teilen-Funktion
-
-// Erstellt das PDF und liefert { blob, filename } zurück, oder null bei Fehler (mit Alert-Meldung)
-async function generatePdfBlob(){
-  if(typeof html2canvas === 'undefined' || typeof window.jspdf === 'undefined'){
-    alert('Die PDF-Bibliothek konnte nicht geladen werden. Bitte Internetverbindung prüfen und die Seite neu laden.');
-    return null;
-  }
-  const sheet = document.querySelector('.sheet');
-  const wasOpenIndex = openRowIndex;
-  const wasStep = currentStep;
-
-  // Für den Export alles sichtbar machen: alle Spiele, alle Inhalts-Schritte, volle Tabelle
-  [...tbody.children].forEach(tr => tr.classList.remove('collapsed'));
-  const hiddenEls = document.querySelectorAll('.wizard-nav, .reset-link-row, .status, .report-bar, .guest-banner, #shareBtn, #handoverBtn, #handoverBtnBottom, #saveAufstellungBtn, #step2ForwardBtn, #step3ForwardBtn, #step4ForwardBtn, #step2ImportToolbar, .step-intro, #wizStep3, #wizStep6');
-  hiddenEls.forEach(el => el.style.display = 'none');
-  for(const s of [1, 2, 4, 5]){
-    const el = document.getElementById('wizStep' + s);
-    if(el) el.style.display = 'block';
-  }
-  const table = document.getElementById('matchTable');
-  table.style.display = 'table';
-  table.classList.remove('mode-names', 'mode-gast-entry');
-  document.getElementById('summaryWrapper').style.display = 'block';
-  refreshSignaturePads();
-
-  // Für den Export einen unsichtbaren Klon bauen: echte <input>/<select>/<textarea>-Felder werden durch
-  // reinen Text ersetzt (html2canvas rendert Formularfelder oft mit abgeschnittener Zeilenhöhe),
-  // und die Unterschrift-Canvas-Inhalte werden 1:1 mit hinüberkopiert (Canvas-Pixel werden von
-  // cloneNode() NICHT automatisch mitkopiert).
-  const exportClone = sheet.cloneNode(true);
-  const origFields = sheet.querySelectorAll('input, textarea, select');
-  const cloneFields = exportClone.querySelectorAll('input, textarea, select');
-  origFields.forEach((orig, i) => {
-    const cEl = cloneFields[i];
-    if(!cEl) return;
-    if(orig.type === 'file' || orig.style.display === 'none'){
-      cEl.remove(); // versteckte Steuerelemente (z. B. Datei-Upload) gehören nicht in den Export
-      return;
-    }
-    let text = '';
-    let isPlaceholder = false;
-    if(orig.tagName === 'SELECT'){
-      const opt = orig.options[orig.selectedIndex];
-      text = opt ? opt.textContent : '';
-      isPlaceholder = !orig.value;
-    } else {
-      text = orig.value || '';
-      if(!text && orig.placeholder){
-        text = orig.placeholder;
-        isPlaceholder = true;
-      }
-    }
-    const div = document.createElement('div');
-    div.className = cEl.className;
-    div.style.cssText = 'display:flex; align-items:center; min-height:' + (cEl.offsetHeight || 40) + 'px;'
-      + 'padding:8px 10px; border:1px solid #c9d2de; border-radius:5px; background:#fff;'
-      + 'font-size:14px; font-family:inherit; box-sizing:border-box; width:100%;'
-      + 'white-space:' + (orig.tagName === 'TEXTAREA' ? 'pre-wrap' : 'nowrap') + '; overflow:hidden;'
-      + 'color:' + (isPlaceholder ? '#8a94a3' : '#1c2733') + ';';
-    div.textContent = text;
-    cEl.replaceWith(div);
-  });
-  const origCanvases = sheet.querySelectorAll('canvas.signature-pad');
-  const cloneCanvases = exportClone.querySelectorAll('canvas.signature-pad');
-  await Promise.all([...origCanvases].map((orig, i) => new Promise(resolve => {
-    const cCanvas = cloneCanvases[i];
-    if(!cCanvas){ resolve(); return; }
-    const img = document.createElement('img');
-    img.onload = resolve;
-    img.onerror = resolve; // notfalls trotzdem weitermachen, statt den ganzen Export zu blockieren
-    img.src = orig.toDataURL('image/png');
-    img.style.width = '100%';
-    img.style.height = orig.getBoundingClientRect().height + 'px';
-    img.style.display = 'block';
-    img.style.border = '1px solid #c9d2de';
-    img.style.borderRadius = '6px';
-    img.style.background = '#fdfdfd';
-    img.className = cCanvas.className;
-    cCanvas.replaceWith(img);
-  })));
-
-  exportClone.style.position = 'absolute';
-  exportClone.style.top = '0';
-  exportClone.style.left = '-99999px';
-  exportClone.style.margin = '0';
-  exportClone.style.width = sheet.getBoundingClientRect().width + 'px';
-  document.body.appendChild(exportClone);
-
-  let result = null;
-  try{
-    // scale:1 statt 2 – vermeidet, dass die Canvas-Größe auf iPad/Safari an interne Grenzen stößt
-    // windowWidth/windowHeight explizit auf die volle Inhaltsgröße setzen: sonst rendert html2canvas
-    // bei sehr langen Seiten nur "einen Bildschirm hoch" und setzt den Rest intern zusammen,
-    // wodurch an den Nahtstellen graue Streifen entstehen.
-    const canvas = await html2canvas(exportClone, {
-      scale: 1,
-      backgroundColor: '#ffffff',
-      useCORS: true,
-      windowWidth: exportClone.scrollWidth,
-      windowHeight: exportClone.scrollHeight,
-      width: exportClone.scrollWidth,
-      height: exportClone.scrollHeight
-    });
-    if(canvas.width === 0 || canvas.height === 0){
-      throw new Error('Erzeugte Bildfläche ist leer (0x0).');
-    }
-    const { jsPDF } = window.jspdf;
-    const pdf = new jsPDF('p', 'mm', 'a4');
-    const pageWidth = pdf.internal.pageSize.getWidth();
-    const pageHeight = pdf.internal.pageSize.getHeight();
-    const imgWidth = pageWidth;
-    const imgHeight = (canvas.height * imgWidth) / canvas.width;
-    const imgData = canvas.toDataURL('image/jpeg', 0.92);
-
-    if(imgHeight <= pageHeight){
-      pdf.addImage(imgData, 'JPEG', 0, 0, imgWidth, imgHeight);
-    } else {
-      // Mehrseitig: Bild in Seiten-große Streifen zerlegen
-      let heightLeft = imgHeight;
-      let position = 0;
-      pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
-      heightLeft -= pageHeight;
-      while(heightLeft > 0){
-        position = heightLeft - imgHeight;
-        pdf.addPage();
-        pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
-        heightLeft -= pageHeight;
-      }
-    }
-    const data = collectData();
-    const clean = s => (s || '').trim().replace(/[^a-zA-Z0-9äöüÄÖÜß]+/g, '_').replace(/^_+|_+$/g, '');
-    const filename = `Spielbericht_${clean(data.heimverein) || 'Heim'}_vs_${clean(data.gastverein) || 'Gast'}_${clean(data.datum)}.pdf`.replace(/_+/g, '_');
-    result = { blob: pdf.output('blob'), filename };
-  } catch(e){
-    alert('PDF-Erstellung fehlgeschlagen: ' + e.message + '\n\nFalls das Problem bestehen bleibt, versuche es über "🖨️ Drucken" und dort "Als PDF sichern".');
-  } finally {
-    exportClone.remove();
-    openRowIndex = wasOpenIndex;
-    applyAccordionState();
-    hiddenEls.forEach(el => el.style.display = '');
-    currentStep = wasStep;
-    renderWizard();
-    if(isGuestMode) applyGuestRestrictions();
-  }
-  return result;
-}
 
 async function exportPDF(){
-  setStatus('PDF wird erstellt…');
-  const pdfResult = await generatePdfBlob();
-  if(!pdfResult) return;
-  lastExportedPdf = pdfResult;
-
-  // Direkter Download-Versuch (funktioniert auf Desktop-Browsern zuverlässig)
-  const blobUrl = URL.createObjectURL(pdfResult.blob);
-  const a = document.createElement('a');
-  a.href = blobUrl;
-  a.download = pdfResult.filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-
-  // Hinweis: navigator.share() wird hier bewusst NICHT direkt aufgerufen. Safari verwirft die
-  // "vom Nutzer ausgelöst"-Berechtigung für Teilen-Aktionen ebenso wie bei window.open(), sobald
-  // dazwischen eine länger dauernde asynchrone Aktion (hier: html2canvas) lag. Der separate
-  // "📤 PDF teilen"-Button löst das PDF-Teilen deshalb als eigenen, frischen Klick aus.
-  setStatus('PDF erstellt ✓ – auf iPhone/iPad zusätzlich "📤 PDF teilen" antippen (AirDrop/Mail/Sichern).');
+  window.print();
 }
 
 async function sharePdf(){
-  if(!lastExportedPdf){
-    // Noch kein PDF vorbereitet: jetzt erzeugen, aber aus Safari-Kompatibilitätsgründen erst beim
-    // NÄCHSTEN (frischen) Klick tatsächlich teilen - siehe Kommentar in exportPDF().
-    setStatus('PDF wird vorbereitet…');
-    const pdfResult = await generatePdfBlob();
-    if(!pdfResult) return;
-    lastExportedPdf = pdfResult;
-    setStatus('PDF ist fertig ✓ – bitte "📤 PDF teilen" noch einmal antippen zum Versenden.');
-    return;
-  }
-  const file = new File([lastExportedPdf.blob], lastExportedPdf.filename, { type: 'application/pdf' });
-  if(navigator.canShare && navigator.canShare({ files: [file] })){
-    try{
-      await navigator.share({ files: [file], title: 'Badminton-Spielbericht' });
-      setStatus('Geteilt ✓');
-    } catch(e){ /* Nutzer hat abgebrochen -> nichts weiter tun */ }
-  } else {
-    alert('Die Teilen-Funktion wird von diesem Browser nicht unterstützt. Bitte "Als PDF speichern" nutzen und die Datei von dort aus versenden.');
-  }
+  window.print();
 }
 
 function triggerImport(){
