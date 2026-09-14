@@ -668,6 +668,7 @@
   <div class="wizard-step" id="wizStep6" style="display:none;">
     <p class="step-intro">Schritt 6: Bericht versenden.</p>
     <button class="btn-primary btn-finish" onclick="exportPDF()">📄 Als PDF speichern</button>
+    <button class="btn-secondary btn-finish" onclick="sharePdf()">📤 PDF teilen (AirDrop/Mail/WhatsApp)</button>
     <div class="toolbar" style="margin-top:12px;">
       <button class="btn-secondary" onclick="exportData()">⬇️ Exportieren</button>
       <button class="btn-secondary" onclick="triggerImport()">⬆️ Importieren</button>
@@ -1409,11 +1410,16 @@ function exportData(){
   setStatus('Exportiert ✓');
 }
 
+let lastExportedPdf = null; // { blob, filename } des zuletzt erstellten PDFs, für die Teilen-Funktion
+
 async function exportPDF(){
   if(typeof html2canvas === 'undefined' || typeof window.jspdf === 'undefined'){
     setStatus('PDF-Bibliothek konnte nicht geladen werden (Internetverbindung prüfen).');
     return;
   }
+  // Wichtig für iPad/Safari: Tab SOFORT im Klick öffnen, bevor irgendwas await't wird -
+  // sonst gilt der Klick nicht mehr als "vom Nutzer ausgelöst" und Safari blockiert das Öffnen/Speichern stillschweigend.
+  const newTab = window.open('', '_blank');
   setStatus('PDF wird erstellt…');
   const sheet = document.querySelector('.sheet');
   const wasOpenIndex = openRowIndex;
@@ -1461,9 +1467,22 @@ async function exportPDF(){
     const data = collectData();
     const clean = s => (s || '').trim().replace(/[^a-zA-Z0-9äöüÄÖÜß]+/g, '_').replace(/^_+|_+$/g, '');
     const filename = `Spielbericht_${clean(data.heimverein) || 'Heim'}_vs_${clean(data.gastverein) || 'Gast'}_${clean(data.datum)}.pdf`.replace(/_+/g, '_');
-    pdf.save(filename);
-    setStatus('PDF heruntergeladen ✓');
+    const pdfBlob = pdf.output('blob');
+    const blobUrl = URL.createObjectURL(pdfBlob);
+
+    if(newTab){
+      // Bereits offener Tab wird jetzt mit dem fertigen PDF befüllt (funktioniert auch auf iPad/Safari)
+      newTab.location.href = blobUrl;
+    } else {
+      // Popup wurde doch blockiert -> normaler Download-Versuch als Rückfallebene
+      pdf.save(filename);
+    }
+
+    // Teilen-Funktion (z. B. AirDrop/Mail auf iPad), falls verfügbar
+    lastExportedPdf = { blob: pdfBlob, filename };
+    setStatus('PDF erstellt ✓ – falls sich kein Tab geöffnet hat, bitte Pop-ups für diese Seite erlauben.');
   } catch(e){
+    if(newTab) newTab.close();
     setStatus('PDF-Erstellung fehlgeschlagen: ' + e.message);
   } finally {
     openRowIndex = wasOpenIndex;
@@ -1472,6 +1491,22 @@ async function exportPDF(){
     currentStep = wasStep;
     renderWizard();
     if(isGuestMode) applyGuestRestrictions();
+  }
+}
+
+async function sharePdf(){
+  if(!lastExportedPdf){
+    setStatus('Bitte zuerst "Als PDF speichern" nutzen.');
+    return;
+  }
+  const file = new File([lastExportedPdf.blob], lastExportedPdf.filename, { type: 'application/pdf' });
+  if(navigator.canShare && navigator.canShare({ files: [file] })){
+    try{
+      await navigator.share({ files: [file], title: 'Badminton-Spielbericht' });
+      setStatus('Geteilt ✓');
+    } catch(e){ /* Nutzer hat abgebrochen -> nichts weiter tun */ }
+  } else {
+    setStatus('Teilen wird von diesem Browser nicht unterstützt – bitte über den geöffneten PDF-Tab per "Teilen"-Symbol senden.');
   }
 }
 
