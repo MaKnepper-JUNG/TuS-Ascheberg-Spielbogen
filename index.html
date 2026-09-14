@@ -749,8 +749,8 @@
 
   <div class="wizard-step" id="wizStep6" style="display:none;">
     <p class="step-intro">Schritt 6: Bericht versenden.</p>
-    <button class="btn-primary btn-finish" onclick="exportPDF()">🖨️ Als PDF speichern / Teilen</button>
-    <p style="font-size:12.5px;color:#6b7686;margin:8px 0 0;">Öffnet die Druckvorschau – dort „Als PDF sichern" wählen oder über das Teilen-Symbol direkt per AirDrop/Mail versenden.</p>
+    <button class="btn-primary btn-finish" onclick="exportPDF()">📄 Als PDF speichern / Teilen</button>
+    <p style="font-size:12.5px;color:#6b7686;margin:8px 0 0;">Erstellt das PDF direkt (ohne Systemdruckdialog) und öffnet – falls verfügbar – die Teilen-Übersicht (AirDrop/Mail/WhatsApp/„In Dateien sichern").</p>
     <button class="btn-secondary" style="width:100%;margin-top:16px;" onclick="createNewReport()">➕ Neuen Bericht starten</button>
   </div>
 
@@ -887,6 +887,8 @@
   window.firebaseReady = true;
   window.dispatchEvent(new Event('firebase-ready'));
 </script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/5.0.8/jspdf.plugin.autotable.min.js"></script>
 <script>
 const POSITIONS = ["1. HD","2. HD","DD","1. HE","2. HE","3. HE","DE","Mixed"];
 const DOUBLES_INDICES = new Set([0, 1, 2, 7]); // 1. HD, 2. HD, DD, Mixed
@@ -1722,12 +1724,155 @@ function handleImportAufstellungFile(fileInput){
 }
 
 
+function buildNativePdf(){
+  populatePrintLayoutData(); // aktualisiert die zugrunde liegenden Werte (Sieger/Ergebnis-Berechnung etc.)
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF('l', 'mm', 'a4');
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const val = id => document.getElementById(id).value || '';
+  let y = 12;
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(15);
+  doc.text('Mannschaftsspielbericht U19/O19', pageWidth / 2, y, { align: 'center' });
+  y += 8;
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  const heim = val('heimverein') || '\u2013';
+  const gast = val('gastverein') || '\u2013';
+  const metaLine1 = `Bezeichnung der Staffel: ${val('gruppe') || '\u2013'}      Staffel-Nr.: ${val('staffelnr') || '\u2013'}`;
+  const metaLine2 = `Heimverein: ${heim}      Gastverein: ${gast}      Datum: ${val('datum') || '\u2013'}      Beginn: ${val('beginn') || '\u2013'}`;
+  const metaLine3 = `Ort und Hallenbezeichnung der Austragungsstätte: ${val('ort') || '\u2013'}      Spieltag: ${val('spieltag') || '\u2013'}`;
+  doc.text(metaLine1, 12, y); y += 5;
+  doc.text(metaLine2, 12, y); y += 5;
+  doc.text(metaLine3, 12, y); y += 4;
+
+  const printLabels = { "Mixed": "GD" };
+  let heimSpiele = 0, gastSpiele = 0;
+  const bodyRows = POSITIONS.map((pos, i) => {
+    const tr = tbody.children[i];
+    const isDouble = DOUBLES_INDICES.has(i);
+    const get = f => tr.querySelector(`[data-field=${f}]`);
+    const heimNamen = isDouble
+      ? [get('heimNamen1').value, get('heimNamen2').value].filter(Boolean).join('\n')
+      : (get('heimNamen') ? get('heimNamen').value : '');
+    const gastNamen = isDouble
+      ? [get('gastNamen1').value, get('gastNamen2').value].filter(Boolean).join('\n')
+      : (get('gastNamen') ? get('gastNamen').value : '');
+    const sets = [['s1h','s1g'],['s2h','s2g'],['s3h','s3g']];
+    let heimSets = 0, gastSets = 0, heimBaelle = 0, gastBaelle = 0, played = 0;
+    const satzTexte = sets.map(([hf, gf]) => {
+      const h = get(hf).value, g = get(gf).value;
+      if(h === '' || g === '') return '';
+      const hn = parseInt(h, 10), gn = parseInt(g, 10);
+      if(isNaN(hn) || isNaN(gn)) return '';
+      played++;
+      heimBaelle += hn; gastBaelle += gn;
+      if(hn > gn) heimSets++; else if(gn > hn) gastSets++;
+      return `${hn}:${gn}`;
+    });
+    let ergHeim = '', ergGast = '';
+    if(played > 0){
+      if(heimSets >= 2){ ergHeim = '1'; ergGast = '0'; heimSpiele++; }
+      else if(gastSets >= 2){ ergHeim = '0'; ergGast = '1'; gastSpiele++; }
+    }
+    return [
+      printLabels[pos] || pos,
+      heimNamen || '',
+      gastNamen || '',
+      satzTexte[0], satzTexte[1], satzTexte[2],
+      played ? String(heimBaelle) : '', played ? String(gastBaelle) : '',
+      played ? String(heimSets) : '', played ? String(gastSets) : '',
+      ergHeim, ergGast
+    ];
+  });
+
+  doc.autoTable({
+    startY: y,
+    margin: { left: 12, right: 12 },
+    styles: { fontSize: 8, cellPadding: 1.5, lineColor: [0,0,0], lineWidth: 0.1, valign: 'middle', halign: 'center' },
+    headStyles: { fillColor: [255,255,255], textColor: [0,0,0], fontStyle: 'bold', lineWidth: 0.1 },
+    bodyStyles: { textColor: [0,0,0] },
+    columnStyles: {
+      1: { halign: 'left', cellWidth: 45 },
+      2: { halign: 'left', cellWidth: 45 }
+    },
+    head: [
+      [
+        { content: 'Spielfolge\nDisziplin', rowSpan: 2 },
+        { content: 'Heimverein\nName und Vorname', rowSpan: 2 },
+        { content: 'Gastverein\nName und Vorname', rowSpan: 2 },
+        { content: 'Sätze', colSpan: 3 },
+        { content: 'Punkte', colSpan: 2 },
+        { content: 'Sätze', colSpan: 2 },
+        { content: 'Spiele', colSpan: 2 }
+      ],
+      ['1.', '2.', '3.', 'Heim', 'Gast', 'Heim', 'Gast', 'Heim', 'Gast']
+    ],
+    body: bodyRows
+  });
+
+  y = doc.lastAutoTable.finalY + 6;
+  doc.setFontSize(9);
+  const sieger = heimSpiele > gastSpiele ? heim : (gastSpiele > heimSpiele ? gast : ((heimSpiele + gastSpiele) > 0 ? 'Unentschieden' : '\u2013'));
+  doc.text(`Sieger: ${sieger}      Ergebnis: ${heimSpiele} : ${gastSpiele}`, 12, y);
+  y += 7;
+
+  doc.setFontSize(8);
+  const declaration = 'Die Richtigkeit der eingetragenen Daten wird bescheinigt. Das Spiel hat unter Beachtung der zuständigen Spielordnung stattgefunden.';
+  doc.text(declaration, 12, y);
+  y += 5;
+  const notesLines = doc.splitTextToSize(`Besondere Vorkommnisse: ${val('notes') || '\u2013'}`, pageWidth - 24);
+  doc.text(notesLines, 12, y);
+  y += notesLines.length * 4 + 8;
+
+  const sigWidth = 70, sigHeight = 20;
+  const heimSigData = getSignatureData('sigHeim');
+  const gastSigData = getSignatureData('sigGast');
+  const col1X = 12, col2X = pageWidth / 2 + 12;
+  if(heimSigData) doc.addImage(heimSigData, 'PNG', col1X, y - sigHeight, sigWidth, sigHeight);
+  if(gastSigData) doc.addImage(gastSigData, 'PNG', col2X, y - sigHeight, sigWidth, sigHeight);
+  doc.setLineWidth(0.2);
+  doc.line(col1X, y, col1X + sigWidth, y);
+  doc.line(col2X, y, col2X + sigWidth, y);
+  y += 4;
+  doc.setFontSize(7.5);
+  doc.text('(Mannschaftsführer Heimmannschaft)', col1X + sigWidth / 2, y, { align: 'center' });
+  doc.text('(Mannschaftsführer Gastmannschaft)', col2X + sigWidth / 2, y, { align: 'center' });
+  y += 8;
+
+  doc.setFontSize(8);
+  doc.text('Protestvorbehalt gem. SpO: \u2013      Protestgrund: \u2013', 12, y);
+  doc.setFontSize(7);
+  doc.text('Anlage 3 der SpO', pageWidth - 12, doc.internal.pageSize.getHeight() - 8, { align: 'right' });
+
+  const clean = s => (s || '').trim().replace(/[^a-zA-Z0-9äöüÄÖÜß]+/g, '_').replace(/^_+|_+$/g, '');
+  const filename = `Spielbericht_${clean(heim) || 'Heim'}_vs_${clean(gast) || 'Gast'}_${clean(val('datum'))}.pdf`.replace(/_+/g, '_');
+  return { doc, filename };
+}
+
+function populatePrintLayoutData(){
+  computeAll(); // stellt sicher, dass Summen/Ergebnisse aktuell sind
+}
+
 async function exportPDF(){
-  window.print();
+  const { doc, filename } = buildNativePdf();
+  const blob = doc.output('blob');
+  const file = new File([blob], filename, { type: 'application/pdf' });
+  if(navigator.canShare && navigator.canShare({ files: [file] })){
+    try{
+      await navigator.share({ files: [file], title: 'Badminton-Spielbericht' });
+      setStatus('Geteilt ✓');
+      return;
+    } catch(e){ /* abgebrochen -> normaler Download als Rückfall */ }
+  }
+  doc.save(filename);
+  setStatus('PDF heruntergeladen ✓');
 }
 
 async function sharePdf(){
-  window.print();
+  await exportPDF();
 }
 
 function triggerImport(){
