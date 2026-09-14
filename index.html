@@ -606,7 +606,7 @@
 
   <div class="wizard-step" id="wizStep2" style="display:none;">
     <p class="step-intro">Schritt 2: Trag die Aufstellung des Heimvereins ein (bei Doppel/Mixed 2 Spieler pro Feld).</p>
-    <div class="toolbar" style="margin-bottom:14px;">
+    <div class="toolbar" id="step2ImportToolbar" style="margin-bottom:14px;">
       <button class="btn-secondary" onclick="triggerImportAufstellung()">⬆️ Aufstellung laden</button>
       <input type="file" id="importAufstellungInput" accept="application/json,.json" style="display:none" onchange="handleImportAufstellungFile(this)">
     </div>
@@ -640,7 +640,9 @@
   </table>
 
   <button type="button" id="saveAufstellungBtn" class="btn-secondary btn-finish" style="display:none;" onclick="exportHeimAufstellung()">⬇️ Aufstellung speichern</button>
+  <button type="button" id="step2ForwardBtn" class="btn-primary btn-finish" style="display:none;" onclick="wizardNext()">Weiter →</button>
   <button type="button" id="step3ForwardBtn" class="btn-primary btn-finish" style="display:none;" onclick="wizardNext()">Weiter →</button>
+  <button type="button" id="handoverBtnBottom" class="btn-primary btn-finish" style="display:none;" onclick="toggleTabletHandover()">✅ Fertig, Tablet zurück</button>
 
   <div id="summaryWrapper" style="display:none;">
     <div class="summary">
@@ -678,11 +680,6 @@
     <p class="step-intro">Schritt 6: Bericht versenden.</p>
     <button class="btn-primary btn-finish" onclick="exportPDF()">📄 Als PDF speichern</button>
     <button class="btn-secondary btn-finish" onclick="sharePdf()">📤 PDF teilen (AirDrop/Mail/WhatsApp)</button>
-    <div class="toolbar" style="margin-top:12px;">
-      <button class="btn-secondary" onclick="exportData()">⬇️ Exportieren</button>
-      <button class="btn-secondary" onclick="triggerImport()">⬆️ Importieren</button>
-      <input type="file" id="importFileInput" accept="application/json,.json" style="display:none" onchange="handleImportFile(this)">
-    </div>
     <button class="btn-secondary" style="width:100%;margin-top:16px;" onclick="createNewReport()">➕ Neuen Bericht starten</button>
   </div>
 
@@ -1021,7 +1018,7 @@ function applyGuestRestrictions(){
   if(typeof refreshSignaturePads === 'function') refreshSignaturePads();
 
   // Berichtsverwaltung und Teilen-Funktion sind für den Gast ausgeblendet
-  const toHide = ['.report-bar', '#shareBtn', '#handoverBtn', '#saveAufstellungBtn', '#step3ForwardBtn', '#step4ForwardBtn'];
+  const toHide = ['.report-bar', '#shareBtn', '#handoverBtn', '#handoverBtnBottom', '#saveAufstellungBtn', '#step2ForwardBtn', '#step3ForwardBtn', '#step4ForwardBtn', '#step2ImportToolbar'];
   toHide.forEach(sel => {
     document.querySelectorAll(sel).forEach(el => el.style.display = 'none');
   });
@@ -1492,7 +1489,7 @@ async function generatePdfBlob(){
 
   // Für den Export alles sichtbar machen: alle Spiele, alle Inhalts-Schritte, volle Tabelle
   [...tbody.children].forEach(tr => tr.classList.remove('collapsed'));
-  const hiddenEls = document.querySelectorAll('.wizard-nav, .reset-link-row, .status, .report-bar, .guest-banner, #shareBtn, #handoverBtn, #saveAufstellungBtn, #step3ForwardBtn, #step4ForwardBtn, .step-intro, #wizStep3, #wizStep6');
+  const hiddenEls = document.querySelectorAll('.wizard-nav, .reset-link-row, .status, .report-bar, .guest-banner, #shareBtn, #handoverBtn, #handoverBtnBottom, #saveAufstellungBtn, #step2ForwardBtn, #step3ForwardBtn, #step4ForwardBtn, #step2ImportToolbar, .step-intro, #wizStep3, #wizStep6');
   hiddenEls.forEach(el => el.style.display = 'none');
   for(const s of [1, 2, 4, 5]){
     const el = document.getElementById('wizStep' + s);
@@ -1514,6 +1511,10 @@ async function generatePdfBlob(){
   origFields.forEach((orig, i) => {
     const cEl = cloneFields[i];
     if(!cEl) return;
+    if(orig.type === 'file' || orig.style.display === 'none'){
+      cEl.remove(); // versteckte Steuerelemente (z. B. Datei-Upload) gehören nicht in den Export
+      return;
+    }
     let text = '';
     let isPlaceholder = false;
     if(orig.tagName === 'SELECT'){
@@ -1566,7 +1567,18 @@ async function generatePdfBlob(){
   let result = null;
   try{
     // scale:1 statt 2 – vermeidet, dass die Canvas-Größe auf iPad/Safari an interne Grenzen stößt
-    const canvas = await html2canvas(exportClone, { scale: 1, backgroundColor: '#ffffff', useCORS: true });
+    // windowWidth/windowHeight explizit auf die volle Inhaltsgröße setzen: sonst rendert html2canvas
+    // bei sehr langen Seiten nur "einen Bildschirm hoch" und setzt den Rest intern zusammen,
+    // wodurch an den Nahtstellen graue Streifen entstehen.
+    const canvas = await html2canvas(exportClone, {
+      scale: 1,
+      backgroundColor: '#ffffff',
+      useCORS: true,
+      windowWidth: exportClone.scrollWidth,
+      windowHeight: exportClone.scrollHeight,
+      width: exportClone.scrollWidth,
+      height: exportClone.scrollHeight
+    });
     if(canvas.width === 0 || canvas.height === 0){
       throw new Error('Erzeugte Bildfläche ist leer (0x0).');
     }
@@ -1718,7 +1730,9 @@ function renderWizard(){
   }
   summaryWrapper.style.display = (currentStep === 4 || currentStep === 5) ? 'block' : 'none';
   document.getElementById('saveAufstellungBtn').style.display = (currentStep === 2) ? 'block' : 'none';
-  document.getElementById('step3ForwardBtn').style.display = (currentStep === 3) ? 'block' : 'none';
+  document.getElementById('step2ForwardBtn').style.display = (currentStep === 2) ? 'block' : 'none';
+  document.getElementById('step3ForwardBtn').style.display = (currentStep === 3 && !tabletHandoverActive) ? 'block' : 'none';
+  document.getElementById('handoverBtnBottom').style.display = (currentStep === 3 && tabletHandoverActive) ? 'block' : 'none';
   document.getElementById('step4ForwardBtn').style.display = (currentStep === 4) ? 'block' : 'none';
 
   document.getElementById('wizProgressText').textContent = `Schritt ${currentStep} von ${TOTAL_STEPS}: ${STEP_TITLES[currentStep]}`;
@@ -1810,6 +1824,8 @@ function toggleTabletHandover(){
       }
     });
     btn.textContent = '✅ Fertig, Tablet zurück';
+    renderWizard();
+    scheduleAutosave();
   } else {
     tbody.querySelectorAll('.name-input').forEach(inp => {
       if((inp.dataset.field || '').startsWith('heimNamen') && inp.dataset.tempWasDisabled === '0'){
@@ -1817,9 +1833,10 @@ function toggleTabletHandover(){
       }
     });
     btn.textContent = '📱 Gast trägt jetzt hier ein (gleiches Gerät)';
+    renderWizard();
+    scheduleAutosave();
+    wizardNext(); // "Fertig, Tablet zurück" -> direkt automatisch zu Schritt 4 weiter (inkl. Validierung)
   }
-  renderWizard();
-  scheduleAutosave();
 }
 
 // ---- Unterschriften-Pads (Maus, Touch, Stift) ----
