@@ -660,7 +660,7 @@
         </select>
       </div>
       <div class="field"><label>Gastverein</label><input type="text" id="gastverein" placeholder="z. B. BC Beispieldorf"></div>
-      <div class="field"><label>Gruppe bzw. Spiel-Nr.</label><input type="text" id="gruppe"></div>
+      <div class="field"><label>Staffel</label><input type="text" id="gruppe"></div>
       <div class="field"><label>Staffel-Nr.</label><input type="text" id="staffelnr"></div>
       <div class="field"><label>Austragungsort</label>
         <select id="ort">
@@ -672,7 +672,6 @@
       <div class="field"><label>Datum</label><input type="text" id="datum" placeholder="TT.MM.JJJJ"></div>
       <div class="field"><label>Beginn</label><input type="text" id="beginn" placeholder="z. B. 17:00"></div>
       <div class="field"><label>Spieltag</label><input type="text" id="spieltag"></div>
-      <div class="field"><label>Uhrzeit</label><input type="text" id="uhrzeit" placeholder="z. B. 17:00"></div>
     </div>
   </div>
 
@@ -1071,7 +1070,6 @@ function populatePrintLayout(){
   document.getElementById('printBeginn').textContent = val('beginn') || '\u00A0';
   document.getElementById('printOrt').textContent = val('ort') || '\u00A0';
   document.getElementById('printSpieltag').textContent = val('spieltag') || '\u00A0';
-  document.getElementById('printUhrzeit').textContent = val('uhrzeit') || '\u00A0';
   document.getElementById('printNotes').textContent = val('notes');
 
   const printLabels = { "Mixed": "GD" }; // offizielle Bezeichnung für Mixed ist "GD" (Gemischtes Doppel)
@@ -1301,7 +1299,6 @@ function collectData(){
     datum: document.getElementById('datum').value,
     beginn: document.getElementById('beginn').value,
     spieltag: document.getElementById('spieltag').value,
-    uhrzeit: document.getElementById('uhrzeit').value,
     notes: document.getElementById('notes').value,
     heimSignatur: getSignatureData('sigHeim'),
     gastSignatur: getSignatureData('sigGast'),
@@ -1321,7 +1318,6 @@ function applyData(data){
   document.getElementById('datum').value = data.datum || '';
   document.getElementById('beginn').value = data.beginn || '';
   document.getElementById('spieltag').value = data.spieltag || '';
-  document.getElementById('uhrzeit').value = data.uhrzeit || '';
   document.getElementById('notes').value = data.notes || '';
   clearSignature('sigHeim');
   clearSignature('sigGast');
@@ -1507,7 +1503,7 @@ async function attachLiveSync(id){
 function handleIncomingLiveUpdate(data){
   const active = document.activeElement;
 
-  const metaIds = ['heimverein', 'gastverein', 'gruppe', 'staffelnr', 'ort', 'datum', 'beginn', 'spieltag', 'uhrzeit', 'notes'];
+  const metaIds = ['heimverein', 'gastverein', 'gruppe', 'staffelnr', 'ort', 'datum', 'beginn', 'spieltag', 'notes'];
   metaIds.forEach(id => {
     const el = document.getElementById(id);
     if(el && el !== active && data[id] !== undefined && el.value !== data[id]){
