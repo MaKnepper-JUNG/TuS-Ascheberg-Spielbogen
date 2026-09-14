@@ -530,6 +530,10 @@
   </div>
 
   <div class="finish-section">
+    <button id="lockNamesBtn" class="btn-secondary btn-finish" onclick="toggleNamesLocked()">🔒 Namen final eingetragen</button>
+  </div>
+
+  <div class="finish-section">
     <button id="finishBtn" class="btn-primary btn-finish" onclick="toggleMatchesFinished()">✅ Alle Spiele beendet</button>
   </div>
 
@@ -897,6 +901,7 @@ function collectData(){
     notes: document.getElementById('notes').value,
     heimSignatur: getSignatureData('sigHeim'),
     gastSignatur: getSignatureData('sigGast'),
+    namenGesperrt: namesLocked,
     rows
   };
 }
@@ -921,6 +926,7 @@ function applyData(data){
       if(input) input.value = rowData[field];
     });
   });
+  setNamesLocked(!!data.namenGesperrt);
   computeAll();
 }
 
@@ -1003,7 +1009,37 @@ function clearForm(){
   clearSignature('sigHeim');
   clearSignature('sigGast');
   setMatchesFinished(false);
+  setNamesLocked(false);
   computeAll();
+}
+
+// ---- "Namen final eingetragen" -> Namensfelder sperren, nur Ergebnisse bleiben änderbar ----
+let namesLocked = false;
+
+function setNamesLocked(state){
+  namesLocked = state;
+  tbody.querySelectorAll('.name-input').forEach(input => {
+    input.disabled = state;
+  });
+  const btn = document.getElementById('lockNamesBtn');
+  if(state){
+    btn.textContent = '🔓 Namen wieder bearbeitbar machen';
+  } else {
+    btn.textContent = '🔒 Namen final eingetragen';
+  }
+}
+
+function toggleNamesLocked(){
+  if(!namesLocked){
+    if(!confirm('Alle Namensfelder (Heim & Gast) werden gesperrt – danach sind nur noch die Ergebnisse änderbar. Fortfahren?')) return;
+    setNamesLocked(true);
+    scheduleAutosave();
+    setStatus('Namen gesperrt ✓');
+  } else {
+    setNamesLocked(false);
+    scheduleAutosave();
+    setStatus('Namen wieder bearbeitbar.');
+  }
 }
 
 // Wartet kurz, bis das Firebase-Modul geladen ist (überspringt das Warten, wenn erkennbar offline)
@@ -1082,6 +1118,10 @@ function handleIncomingLiveUpdate(data){
       el.value = data[id];
     }
   });
+
+  if(typeof data.namenGesperrt === 'boolean' && data.namenGesperrt !== namesLocked){
+    setNamesLocked(data.namenGesperrt);
+  }
 
   (data.rows || []).forEach((rowData, i) => {
     const tr = tbody.children[i];
