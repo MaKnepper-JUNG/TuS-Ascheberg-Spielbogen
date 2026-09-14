@@ -1009,6 +1009,7 @@ function applyGuestRestrictions(){
   table.style.display = 'table';
   table.classList.remove('mode-names', 'mode-gast-entry');
   document.getElementById('summaryWrapper').style.display = 'block';
+  if(typeof refreshSignaturePads === 'function') refreshSignaturePads();
 
   // Berichtsverwaltung und Teilen-Funktion sind für den Gast ausgeblendet
   const toHide = ['.report-bar', '#shareBtn', '#handoverBtn'];
@@ -1430,6 +1431,7 @@ async function exportPDF(){
   table.style.display = 'table';
   table.classList.remove('mode-names', 'mode-gast-entry');
   document.getElementById('summaryWrapper').style.display = 'block';
+  refreshSignaturePads();
 
   try{
     const canvas = await html2canvas(sheet, { scale: 2, backgroundColor: '#ffffff', useCORS: true });
@@ -1547,6 +1549,11 @@ function renderWizard(){
   } else if(currentStep < 4 && namesLocked){
     setNamesLocked(false);
   }
+
+  // Unterschriftenfelder bekommen erst jetzt eine echte Größe, da sie vorher unsichtbar (display:none) waren
+  if(currentStep === 5 && typeof refreshSignaturePads === 'function'){
+    refreshSignaturePads();
+  }
 }
 
 function validateStep(step){
@@ -1634,22 +1641,13 @@ function toggleTabletHandover(){
 
 // ---- Unterschriften-Pads (Maus, Touch, Stift) ----
 const signatureState = {};
+const pendingSignatureData = {}; // id -> Daten-URL, falls beim Laden noch nicht sichtbar
 
 function initSignaturePad(id){
   const canvas = document.getElementById(id);
   if(!canvas) return;
-  const ratio = window.devicePixelRatio || 1;
-  const rect = canvas.getBoundingClientRect();
-  canvas.width = rect.width * ratio;
-  canvas.height = rect.height * ratio;
-  const ctx = canvas.getContext('2d');
-  ctx.scale(ratio, ratio);
-  ctx.lineWidth = 2.2;
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
-  ctx.strokeStyle = '#1c2733';
 
-  const st = { ctx, drawing:false, hasContent:false, lastX:0, lastY:0, width:rect.width, height:rect.height };
+  const st = { ctx:null, drawing:false, hasContent:false, lastX:0, lastY:0, width:0, height:0, sized:false };
   signatureState[id] = st;
 
   const getPos = e => {
@@ -1658,6 +1656,7 @@ function initSignaturePad(id){
   };
 
   canvas.addEventListener('pointerdown', e => {
+    if(!st.sized) sizeSignatureCanvas(id); // falls gerade erst sichtbar geworden
     canvas.setPointerCapture(e.pointerId);
     const p = getPos(e);
     st.drawing = true;
@@ -1679,14 +1678,65 @@ function initSignaturePad(id){
   canvas.addEventListener('pointerup', stopDrawing);
   canvas.addEventListener('pointercancel', stopDrawing);
   canvas.addEventListener('pointerleave', stopDrawing);
+
+  sizeSignatureCanvas(id); // klappt nur, falls das Feld gerade sichtbar ist
+}
+
+// Setzt/aktualisiert die tatsächliche Zeichenfläche, sobald das Canvas eine echte Größe hat (nicht 0x0 durch display:none)
+function sizeSignatureCanvas(id){
+  const canvas = document.getElementById(id);
+  const st = signatureState[id];
+  if(!canvas || !st) return false;
+  const rect = canvas.getBoundingClientRect();
+  if(rect.width === 0 || rect.height === 0) return false; // noch unsichtbar -> später erneut versuchen
+
+  let preserved = null;
+  if(st.sized && st.hasContent){
+    preserved = canvas.toDataURL('image/png'); // vorhandene Unterschrift vor dem Resize sichern
+  }
+
+  const ratio = window.devicePixelRatio || 1;
+  canvas.width = rect.width * ratio;
+  canvas.height = rect.height * ratio;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(ratio, ratio);
+  ctx.lineWidth = 2.2;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.strokeStyle = '#1c2733';
+
+  st.ctx = ctx;
+  st.width = rect.width;
+  st.height = rect.height;
+  st.sized = true;
+
+  if(preserved){
+    const img = new Image();
+    img.onload = () => ctx.drawImage(img, 0, 0, rect.width, rect.height);
+    img.src = preserved;
+  } else if(pendingSignatureData[id]){
+    const dataUrl = pendingSignatureData[id];
+    delete pendingSignatureData[id];
+    const img = new Image();
+    img.onload = () => { ctx.drawImage(img, 0, 0, rect.width, rect.height); st.hasContent = true; };
+    img.src = dataUrl;
+  }
+  return true;
+}
+
+// Wird aufgerufen, sobald Schritt 5 (oder die feste Gastansicht) angezeigt wird
+function refreshSignaturePads(){
+  sizeSignatureCanvas('sigHeim');
+  sizeSignatureCanvas('sigGast');
 }
 
 function clearSignature(id){
   const canvas = document.getElementById(id);
   const st = signatureState[id];
   if(!canvas || !st) return;
-  st.ctx.clearRect(0, 0, st.width, st.height);
+  if(st.ctx) st.ctx.clearRect(0, 0, st.width, st.height);
   st.hasContent = false;
+  delete pendingSignatureData[id];
 }
 
 function getSignatureData(id){
@@ -1698,15 +1748,23 @@ function getSignatureData(id){
 
 function loadSignatureData(id, dataUrl){
   if(!dataUrl) return;
-  const canvas = document.getElementById(id);
   const st = signatureState[id];
-  if(!canvas || !st) return;
-  const img = new Image();
-  img.onload = () => {
-    st.ctx.drawImage(img, 0, 0, st.width, st.height);
-    st.hasContent = true;
-  };
-  img.src = dataUrl;
+  if(!st) return;
+  if(!st.sized){
+    sizeSignatureCanvas(id);
+  }
+  if(st.sized){
+    const canvas = document.getElementById(id);
+    const img = new Image();
+    img.onload = () => {
+      st.ctx.drawImage(img, 0, 0, st.width, st.height);
+      st.hasContent = true;
+    };
+    img.src = dataUrl;
+  } else {
+    // Feld noch nicht sichtbar -> merken und beim nächsten refreshSignaturePads() nachholen
+    pendingSignatureData[id] = dataUrl;
+  }
 }
 
 initSignaturePad('sigHeim');
