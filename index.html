@@ -1825,9 +1825,10 @@ function buildNativePdf(){
   y += 5;
   const notesLines = doc.splitTextToSize(`Besondere Vorkommnisse: ${val('notes') || '\u2013'}`, pageWidth - 24);
   doc.text(notesLines, 12, y);
-  y += notesLines.length * 4 + 8;
+  y += notesLines.length * 4 + 6;
 
   const sigWidth = 70, sigHeight = 20;
+  y += sigHeight + 4; // ausreichend Platz für die Unterschrift-Grafik VOR der Linie freihalten
   const heimSigData = getSignatureData('sigHeim');
   const gastSigData = getSignatureData('sigGast');
   const col1X = 12, col2X = pageWidth / 2 + 12;
