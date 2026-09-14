@@ -51,6 +51,58 @@
     padding:8px 10px;
     min-height:38px;
   }
+  .btn-share{
+    width:100%;
+    font-size:13.5px;
+    padding:12px 14px;
+    margin-bottom:18px;
+  }
+  .share-overlay{
+    display:none;
+    position:fixed;
+    inset:0;
+    background:rgba(20,30,40,0.55);
+    z-index:1000;
+    align-items:center;
+    justify-content:center;
+    padding:20px;
+  }
+  .share-overlay.open{display:flex;}
+  .share-box{
+    background:#fff;
+    border-radius:10px;
+    padding:22px 20px;
+    max-width:360px;
+    width:100%;
+    text-align:center;
+    box-shadow:0 8px 30px rgba(0,0,0,0.25);
+  }
+  .share-box h3{
+    margin:0 0 10px;
+    color:var(--victor-blue);
+    font-size:17px;
+  }
+  .share-box p{
+    font-size:13px;
+    color:#3a4657;
+    margin:0 0 14px;
+    text-align:left;
+  }
+  .share-link-row{
+    display:flex;
+    gap:6px;
+    margin-bottom:16px;
+  }
+  .share-link-row input{
+    font-size:12px;
+    padding:8px;
+  }
+  .share-qr{
+    width:180px;
+    height:180px;
+    border:1px solid var(--border);
+    border-radius:8px;
+  }
   .header-row{
     display:flex;
     justify-content:space-between;
@@ -400,6 +452,21 @@
     </div>
   </div>
 
+  <button type="button" class="btn-primary btn-share" onclick="shareReportLink()">🔗 An Gastverein senden (eigene Spieler eintragen)</button>
+
+  <div id="shareOverlay" class="share-overlay">
+    <div class="share-box">
+      <h3>Bericht mit Gastverein teilen</h3>
+      <p>Der Gastverein öffnet diesen Link auf dem <strong>eigenen Handy</strong> und trägt dort seine Spieler selbst ein – die Daten landen automatisch im selben Bericht.</p>
+      <div class="share-link-row">
+        <input type="text" id="shareLinkInput" readonly onclick="this.select()">
+        <button type="button" class="btn-secondary btn-small" onclick="copyShareLink()">Kopieren</button>
+      </div>
+      <img id="shareQrImg" class="share-qr" alt="QR-Code zum Scannen für den Gastverein">
+      <button type="button" class="btn-secondary" style="width:100%;margin-top:12px;" onclick="closeShareOverlay()">Schließen</button>
+    </div>
+  </div>
+
   <div class="header-row">
     <div class="titles">
       <h1>Badminton-Spielbericht</h1>
@@ -504,7 +571,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
-  import { getFirestore, doc, setDoc, getDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
+  import { getFirestore, doc, setDoc, getDoc, onSnapshot, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyDjcDjKr-hrZa6EQXMEs0uG358eO4rt0P8",
@@ -517,6 +584,7 @@
 
   const app = initializeApp(firebaseConfig);
   const db = getFirestore(app);
+  let unsubscribeLive = null;
 
   // Für den klassischen (nicht-modularen) Haupt-Script-Block global verfügbar machen
   window.cloudSaveReport = async function(id, dataObj){
@@ -537,6 +605,23 @@
       console.error("Cloud-Laden fehlgeschlagen:", e);
       return null;
     }
+  };
+
+  // Live-Updates: ruft callback(daten) auf, sobald sich der Bericht in der Cloud ändert
+  window.subscribeToReport = function(id, callback){
+    if(unsubscribeLive){ unsubscribeLive(); unsubscribeLive = null; }
+    if(!id) return;
+    unsubscribeLive = onSnapshot(doc(db, "spielberichte", id), snap => {
+      if(snap.metadata.hasPendingWrites) return; // eigene, noch unbestätigte Schreibvorgänge ignorieren
+      if(!snap.exists()) return;
+      callback(snap.data());
+    }, error => {
+      console.error("Live-Sync Fehler:", error);
+    });
+  };
+
+  window.unsubscribeFromReport = function(){
+    if(unsubscribeLive){ unsubscribeLive(); unsubscribeLive = null; }
   };
 
   window.firebaseReady = true;
@@ -960,6 +1045,44 @@ async function switchReport(newId, options){
     datumInput.value = `${String(heute.getDate()).padStart(2,'0')}.${String(heute.getMonth()+1).padStart(2,'0')}.${heute.getFullYear()}`;
   }
   renderReportSelector();
+  attachLiveSync(activeReportId);
+}
+
+// ---- Live-Aktualisierung: Änderungen vom Gastverein automatisch übernehmen ----
+async function attachLiveSync(id){
+  try{
+    const ready = await waitForFirebase();
+    if(ready && window.subscribeToReport){
+      window.subscribeToReport(id, handleIncomingLiveUpdate);
+    }
+  } catch(e){ /* Live-Sync ist optional, Rest funktioniert weiter */ }
+}
+
+function handleIncomingLiveUpdate(data){
+  const active = document.activeElement;
+
+  const metaIds = ['heimverein', 'gastverein', 'gruppe', 'ort', 'datum', 'notes'];
+  metaIds.forEach(id => {
+    const el = document.getElementById(id);
+    if(el && el !== active && data[id] !== undefined && el.value !== data[id]){
+      el.value = data[id];
+    }
+  });
+
+  (data.rows || []).forEach((rowData, i) => {
+    const tr = tbody.children[i];
+    if(!tr) return;
+    Object.keys(rowData).forEach(field => {
+      const input = tr.querySelector(`[data-field=${field}]`);
+      if(input && input !== active && input.value !== rowData[field]){
+        input.value = rowData[field];
+      }
+    });
+  });
+  // Unterschriften bewusst NICHT live überschreiben (würde eine gerade laufende Unterschrift stören)
+
+  computeAll();
+  setStatus('🔄 Automatisch aktualisiert');
 }
 
 async function createNewReport(){
@@ -1000,6 +1123,54 @@ async function deleteCurrentReport(){
 document.getElementById('reportSelector').addEventListener('change', e => {
   switchReport(e.target.value);
 });
+
+// ---- Bericht mit Gastverein teilen (Link + QR-Code) ----
+function buildShareUrl(){
+  const url = new URL(window.location.href);
+  url.search = '';
+  url.hash = '';
+  url.searchParams.set('bericht', activeReportId);
+  return url.toString();
+}
+
+async function shareReportLink(){
+  // Aktuellen Stand vorher in die Cloud sichern, damit der Gastverein alles Aktuelle sieht
+  await persistActiveReport();
+  const url = buildShareUrl();
+  if(navigator.share){
+    try{
+      await navigator.share({ title: 'Badminton-Spielbericht', text: 'Bitte tragt eure Aufstellung hier ein:', url });
+      return;
+    } catch(e){ /* abgebrochen oder nicht unterstützt -> Fallback unten */ }
+  }
+  openShareOverlay(url);
+}
+
+function openShareOverlay(url){
+  document.getElementById('shareLinkInput').value = url;
+  document.getElementById('shareQrImg').src = 'https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=' + encodeURIComponent(url);
+  document.getElementById('shareOverlay').classList.add('open');
+}
+
+function closeShareOverlay(){
+  document.getElementById('shareOverlay').classList.remove('open');
+}
+
+async function copyShareLink(){
+  const input = document.getElementById('shareLinkInput');
+  input.select();
+  try{
+    await navigator.clipboard.writeText(input.value);
+    setStatus('Link kopiert ✓');
+  } catch(e){
+    setStatus('Bitte den markierten Link manuell kopieren.');
+  }
+}
+
+function getReportIdFromUrl(){
+  const params = new URLSearchParams(window.location.search);
+  return params.get('bericht');
+}
 
 async function saveData(){
   const ok = await persistActiveReport();
@@ -1226,9 +1397,20 @@ initSignaturePad('sigGast');
 // Beim Start: Berichte-Index laden, zuletzt aktiven Bericht öffnen (oder ersten anlegen)
 (async () => {
   await loadReportIndex();
-  const storedActive = await storageGet('spielbericht:activeId');
-  const validStoredActive = reportIndex.some(r => r.id === storedActive);
-  const startId = validStoredActive ? storedActive : reportIndex[0].id;
+  const urlReportId = getReportIdFromUrl();
+  let startId;
+  if(urlReportId){
+    // Über einen geteilten Link geöffnet: diesen Bericht direkt laden (auch auf einem fremden Gerät)
+    if(!reportIndex.some(r => r.id === urlReportId)){
+      reportIndex.push({ id: urlReportId, label: 'Geteilter Bericht' });
+      await saveReportIndex();
+    }
+    startId = urlReportId;
+  } else {
+    const storedActive = await storageGet('spielbericht:activeId');
+    const validStoredActive = reportIndex.some(r => r.id === storedActive);
+    startId = validStoredActive ? storedActive : reportIndex[0].id;
+  }
   await switchReport(startId, { save: false });
   computeAll();
 })();
