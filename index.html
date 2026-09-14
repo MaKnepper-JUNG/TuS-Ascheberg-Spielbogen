@@ -1335,8 +1335,11 @@ function buildShareUrl(){
 }
 
 async function shareReportLink(){
-  // Aktuellen Stand vorher in die Cloud sichern, damit der Gastverein alles Aktuelle sieht
-  await persistActiveReport();
+  // Im Hintergrund speichern, NICHT abwarten – sonst verliert der Klick auf iPad/Safari
+  // seine "vom Nutzer ausgelöst"-Berechtigung, bevor navigator.share() aufgerufen wird
+  // (dieselbe Aktivierungs-Regel wie beim PDF-Teilen). Die Live-Synchronisierung holt
+  // die Daten beim Gastverein ohnehin unmittelbar danach nach.
+  persistActiveReport().catch(() => { /* Speicherfehler hier ignorieren, betrifft nur das Teilen nicht */ });
   const url = buildShareUrl();
   if(navigator.share){
     try{
@@ -1436,10 +1439,61 @@ async function generatePdfBlob(){
   document.getElementById('summaryWrapper').style.display = 'block';
   refreshSignaturePads();
 
+  // Für den Export einen unsichtbaren Klon bauen: echte <input>/<select>/<textarea>-Felder werden durch
+  // reinen Text ersetzt (html2canvas rendert Formularfelder oft mit abgeschnittener Zeilenhöhe),
+  // und die Unterschrift-Canvas-Inhalte werden 1:1 mit hinüberkopiert (Canvas-Pixel werden von
+  // cloneNode() NICHT automatisch mitkopiert).
+  const exportClone = sheet.cloneNode(true);
+  const origFields = sheet.querySelectorAll('input, textarea, select');
+  const cloneFields = exportClone.querySelectorAll('input, textarea, select');
+  origFields.forEach((orig, i) => {
+    const cEl = cloneFields[i];
+    if(!cEl) return;
+    let text = '';
+    let isPlaceholder = false;
+    if(orig.tagName === 'SELECT'){
+      const opt = orig.options[orig.selectedIndex];
+      text = opt ? opt.textContent : '';
+      isPlaceholder = !orig.value;
+    } else {
+      text = orig.value || '';
+      if(!text && orig.placeholder){
+        text = orig.placeholder;
+        isPlaceholder = true;
+      }
+    }
+    const div = document.createElement('div');
+    div.className = cEl.className;
+    div.style.cssText = 'display:flex; align-items:center; min-height:' + (cEl.offsetHeight || 40) + 'px;'
+      + 'padding:8px 10px; border:1px solid #c9d2de; border-radius:5px; background:#fff;'
+      + 'font-size:14px; font-family:inherit; box-sizing:border-box; width:100%;'
+      + 'white-space:' + (orig.tagName === 'TEXTAREA' ? 'pre-wrap' : 'nowrap') + '; overflow:hidden;'
+      + 'color:' + (isPlaceholder ? '#8a94a3' : '#1c2733') + ';';
+    div.textContent = text;
+    cEl.replaceWith(div);
+  });
+  const origCanvases = sheet.querySelectorAll('canvas.signature-pad');
+  const cloneCanvases = exportClone.querySelectorAll('canvas.signature-pad');
+  origCanvases.forEach((orig, i) => {
+    const cCanvas = cloneCanvases[i];
+    if(!cCanvas) return;
+    cCanvas.width = orig.width;
+    cCanvas.height = orig.height;
+    const cCtx = cCanvas.getContext('2d');
+    cCtx.drawImage(orig, 0, 0);
+  });
+
+  exportClone.style.position = 'fixed';
+  exportClone.style.top = '0';
+  exportClone.style.left = '-99999px';
+  exportClone.style.margin = '0';
+  exportClone.style.width = sheet.getBoundingClientRect().width + 'px';
+  document.body.appendChild(exportClone);
+
   let result = null;
   try{
     // scale:1 statt 2 – vermeidet, dass die Canvas-Größe auf iPad/Safari an interne Grenzen stößt
-    const canvas = await html2canvas(sheet, { scale: 1, backgroundColor: '#ffffff', useCORS: true });
+    const canvas = await html2canvas(exportClone, { scale: 1, backgroundColor: '#ffffff', useCORS: true });
     if(canvas.width === 0 || canvas.height === 0){
       throw new Error('Erzeugte Bildfläche ist leer (0x0).');
     }
@@ -1473,6 +1527,7 @@ async function generatePdfBlob(){
   } catch(e){
     alert('PDF-Erstellung fehlgeschlagen: ' + e.message + '\n\nFalls das Problem bestehen bleibt, versuche es über "🖨️ Drucken" und dort "Als PDF sichern".');
   } finally {
+    exportClone.remove();
     openRowIndex = wasOpenIndex;
     applyAccordionState();
     hiddenEls.forEach(el => el.style.display = '');
@@ -1489,16 +1544,7 @@ async function exportPDF(){
   if(!pdfResult) return;
   lastExportedPdf = pdfResult;
 
-  const file = new File([pdfResult.blob], pdfResult.filename, { type: 'application/pdf' });
-  if(navigator.canShare && navigator.canShare({ files: [file] })){
-    // Auf iPad/iPhone: direkt die native Teilen-Übersicht öffnen (dort "In Dateien sichern", AirDrop, Mail, ...)
-    try{
-      await navigator.share({ files: [file], title: 'Badminton-Spielbericht' });
-      setStatus('Erledigt ✓');
-      return;
-    } catch(e){ /* Nutzer hat abgebrochen -> weiter zum Download-Fallback unten */ }
-  }
-  // Desktop-Browser ohne Teilen-Funktion: normaler Download
+  // Direkter Download-Versuch (funktioniert auf Desktop-Browsern zuverlässig)
   const blobUrl = URL.createObjectURL(pdfResult.blob);
   const a = document.createElement('a');
   a.href = blobUrl;
@@ -1506,15 +1552,24 @@ async function exportPDF(){
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
-  setStatus('PDF heruntergeladen ✓');
+
+  // Hinweis: navigator.share() wird hier bewusst NICHT direkt aufgerufen. Safari verwirft die
+  // "vom Nutzer ausgelöst"-Berechtigung für Teilen-Aktionen ebenso wie bei window.open(), sobald
+  // dazwischen eine länger dauernde asynchrone Aktion (hier: html2canvas) lag. Der separate
+  // "📤 PDF teilen"-Button löst das PDF-Teilen deshalb als eigenen, frischen Klick aus.
+  setStatus('PDF erstellt ✓ – auf iPhone/iPad zusätzlich "📤 PDF teilen" antippen (AirDrop/Mail/Sichern).');
 }
 
 async function sharePdf(){
   if(!lastExportedPdf){
-    setStatus('Erstelle zuerst das PDF…');
+    // Noch kein PDF vorbereitet: jetzt erzeugen, aber aus Safari-Kompatibilitätsgründen erst beim
+    // NÄCHSTEN (frischen) Klick tatsächlich teilen - siehe Kommentar in exportPDF().
+    setStatus('PDF wird vorbereitet…');
     const pdfResult = await generatePdfBlob();
     if(!pdfResult) return;
     lastExportedPdf = pdfResult;
+    setStatus('PDF ist fertig ✓ – bitte "📤 PDF teilen" noch einmal antippen zum Versenden.');
+    return;
   }
   const file = new File([lastExportedPdf.blob], lastExportedPdf.filename, { type: 'application/pdf' });
   if(navigator.canShare && navigator.canShare({ files: [file] })){
@@ -1758,6 +1813,13 @@ function sizeSignatureCanvas(id){
   if(!canvas || !st) return false;
   const rect = canvas.getBoundingClientRect();
   if(rect.width === 0 || rect.height === 0) return false; // noch unsichtbar -> später erneut versuchen
+
+  // Bereits korrekt in dieser Größe initialisiert -> nichts tun. Das verhindert, dass ein erneuter
+  // Aufruf (z. B. direkt vor dem PDF-Export) den Inhalt kurz löscht und erst asynchron wieder
+  // zeichnet, wodurch html2canvas die Fläche in der Zwischenzeit leer fotografieren würde.
+  if(st.sized && Math.abs(st.width - rect.width) < 1 && Math.abs(st.height - rect.height) < 1){
+    return true;
+  }
 
   let preserved = null;
   if(st.sized && st.hasContent){
