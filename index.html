@@ -1650,22 +1650,22 @@ function initSignaturePad(id){
   const st = { ctx:null, drawing:false, hasContent:false, lastX:0, lastY:0, width:0, height:0, sized:false };
   signatureState[id] = st;
 
-  const getPos = e => {
+  const getPos = (clientX, clientY) => {
     const r = canvas.getBoundingClientRect();
-    return { x: e.clientX - r.left, y: e.clientY - r.top };
+    return { x: clientX - r.left, y: clientY - r.top };
   };
 
-  canvas.addEventListener('pointerdown', e => {
+  const startDrawing = (clientX, clientY) => {
     if(!st.sized) sizeSignatureCanvas(id); // falls gerade erst sichtbar geworden
-    canvas.setPointerCapture(e.pointerId);
-    const p = getPos(e);
+    if(!st.ctx) return;
     st.drawing = true;
+    const p = getPos(clientX, clientY);
     st.lastX = p.x;
     st.lastY = p.y;
-  });
-  canvas.addEventListener('pointermove', e => {
-    if(!st.drawing) return;
-    const p = getPos(e);
+  };
+  const moveDrawing = (clientX, clientY) => {
+    if(!st.drawing || !st.ctx) return;
+    const p = getPos(clientX, clientY);
     st.ctx.beginPath();
     st.ctx.moveTo(st.lastX, st.lastY);
     st.ctx.lineTo(p.x, p.y);
@@ -1673,11 +1673,28 @@ function initSignaturePad(id){
     st.lastX = p.x;
     st.lastY = p.y;
     st.hasContent = true;
-  });
+  };
   const stopDrawing = () => { st.drawing = false; };
-  canvas.addEventListener('pointerup', stopDrawing);
-  canvas.addEventListener('pointercancel', stopDrawing);
-  canvas.addEventListener('pointerleave', stopDrawing);
+
+  // Maus (Desktop)
+  canvas.addEventListener('mousedown', e => { startDrawing(e.clientX, e.clientY); });
+  canvas.addEventListener('mousemove', e => { moveDrawing(e.clientX, e.clientY); });
+  window.addEventListener('mouseup', stopDrawing);
+
+  // Touch (iPhone/iPad/Android) – eigenständig statt Pointer Events, da diese auf manchen
+  // Safari-Versionen für Touch-Eingaben auf Canvas nicht zuverlässig funktionieren
+  canvas.addEventListener('touchstart', e => {
+    e.preventDefault();
+    const t = e.touches[0];
+    if(t) startDrawing(t.clientX, t.clientY);
+  }, { passive:false });
+  canvas.addEventListener('touchmove', e => {
+    e.preventDefault();
+    const t = e.touches[0];
+    if(t) moveDrawing(t.clientX, t.clientY);
+  }, { passive:false });
+  canvas.addEventListener('touchend', e => { e.preventDefault(); stopDrawing(); }, { passive:false });
+  canvas.addEventListener('touchcancel', e => { e.preventDefault(); stopDrawing(); }, { passive:false });
 
   sizeSignatureCanvas(id); // klappt nur, falls das Feld gerade sichtbar ist
 }
