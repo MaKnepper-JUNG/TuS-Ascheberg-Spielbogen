@@ -501,6 +501,12 @@
     min-height:32px;
   }
   @media print{
+    *{
+      box-shadow:none !important;
+      transition:none !important;
+      animation:none !important;
+      border-radius:0 !important;
+    }
     body{background:#fff;padding:0;}
     .toolbar,.status,.wizard-nav,.reset-link-row,.report-bar,.guest-banner,
     #shareBtn,#handoverBtn,#handoverBtnBottom,#saveAufstellungBtn,
@@ -513,6 +519,10 @@
     table#matchTable.mode-gast-entry td[data-label]{display:flex !important;}
     #summaryWrapper{display:block !important;}
     tbody tr.collapsed td:not(.pos-cell){display:flex !important;}
+    tbody tr, .signature-block{
+      break-inside:avoid;
+      page-break-inside:avoid;
+    }
     .sheet{box-shadow:none;border:none;}
   }
   @media (max-width:700px){
