@@ -70,6 +70,27 @@
   }
   .guest-banner.show{display:block;}
 
+  .save-toast{
+    position:fixed;
+    top:16px;
+    left:50%;
+    transform:translateX(-50%);
+    background:var(--victor-blue);
+    color:#fff;
+    padding:11px 20px;
+    border-radius:8px;
+    font-size:14px;
+    font-weight:700;
+    box-shadow:0 4px 16px rgba(0,0,0,0.25);
+    z-index:2000;
+    opacity:0;
+    pointer-events:none;
+    transition:opacity .25s ease;
+    max-width:88vw;
+    text-align:center;
+  }
+  .save-toast.show{opacity:1;}
+
   .wizard-nav{
     margin-bottom:6px;
   }
@@ -656,7 +677,6 @@
           <option value="SG Ascheberg/ Herbern">SG Ascheberg/ Herbern</option>
           <option value="TuS Ascheberg J1">TuS Ascheberg J1</option>
           <option value="TuS Ascheberg M1">TuS Ascheberg M1</option>
-          <option value="TuS Ascheberg M2">TuS Ascheberg M2</option>
         </select>
       </div>
       <div class="field"><label>Gastverein</label><input type="text" id="gastverein" placeholder="z. B. BC Beispieldorf"></div>
@@ -669,7 +689,7 @@
           <option value="Altenhammstraße 29, 59387 Ascheberg-Herbern">Altenhammstraße 29, 59387 Ascheberg-Herbern</option>
         </select>
       </div>
-      <div class="field"><label>Datum</label><input type="text" id="datum" placeholder="TT.MM.JJJJ"></div>
+      <div class="field"><label>Datum</label><input type="date" id="datum"></div>
       <div class="field"><label>Beginn</label><input type="text" id="beginn" placeholder="z. B. 17:00"></div>
       <div class="field"><label>Spieltag</label><input type="text" id="spieltag"></div>
     </div>
@@ -751,10 +771,13 @@
     <p class="step-intro">Schritt 6: Bericht versenden.</p>
     <button class="btn-primary btn-finish" onclick="exportPDF()">📄 Als PDF speichern / Teilen</button>
     <p style="font-size:12.5px;color:#6b7686;margin:8px 0 0;">Erstellt das PDF direkt (ohne Systemdruckdialog) und öffnet – falls verfügbar – die Teilen-Übersicht (AirDrop/Mail/WhatsApp/„In Dateien sichern").</p>
+    <button class="btn-secondary btn-finish" style="margin-top:16px;" onclick="shareReportLink()">🔗 Bericht-Link/QR-Code teilen</button>
+    <p style="font-size:12.5px;color:#6b7686;margin:8px 0 0;">Praktisch, wenn ein QR-Code einfacher ist als eine PDF-Datei zu verschicken: Der Empfänger öffnet den Bericht und erzeugt sich das identische PDF selbst über „Als PDF speichern".</p>
     <button class="btn-secondary" style="width:100%;margin-top:16px;" onclick="createNewReport()">➕ Neuen Bericht starten</button>
   </div>
 
   <div class="status" id="status"></div>
+  <div id="saveToast" class="save-toast">✓ Gespeichert</div>
 
   <div id="printLayout">
     <h2 class="print-title">Mannschaftsspielbericht U19/O19</h2>
@@ -1068,7 +1091,7 @@ function populatePrintLayout(){
   document.getElementById('printStaffelnr').textContent = val('staffelnr') || '\u00A0';
   document.getElementById('printHeimverein').textContent = val('heimverein') || '\u00A0';
   document.getElementById('printGastverein').textContent = val('gastverein') || '\u00A0';
-  document.getElementById('printDatum').textContent = val('datum') || '\u00A0';
+  document.getElementById('printDatum').textContent = formatDateGerman(val('datum')) || '\u00A0';
   document.getElementById('printBeginn').textContent = val('beginn') || '\u00A0';
   document.getElementById('printOrt').textContent = val('ort') || '\u00A0';
   document.getElementById('printSpieltag').textContent = val('spieltag') || '\u00A0';
@@ -1207,15 +1230,45 @@ document.getElementById('heimverein').addEventListener('change', computeAll);
 document.getElementById('gastverein').addEventListener('input', computeAll);
 document.getElementById('heimverein').addEventListener('input', updateReportLabelFromTeams);
 document.getElementById('heimverein').addEventListener('change', updateReportLabelFromTeams);
+
+// Staffel und Staffel-Nr. automatisch anhand des gewählten Heimvereins ergänzen
+const STAFFEL_MAP = {
+  "SG Ascheberg/ Herbern": { staffel: "Kreisliga Nord 1", nr: "68" },
+  "TuS Ascheberg 1":       { staffel: "Bezirksklasse Nord 1", nr: "37" },
+  "TuS Ascheberg 2":       { staffel: "Bezirksklasse Nord 1", nr: "38" },
+  "TuS Ascheberg J1":      { staffel: "U19 Verbandsliga Nord 1", nr: "J01" },
+  "TuS Ascheberg M1":      { staffel: "U17 Bezirksliga Nord 1", nr: "M05" },
+};
+function applyStaffelForHeimverein(){
+  const eintrag = STAFFEL_MAP[document.getElementById('heimverein').value];
+  if(!eintrag) return;
+  document.getElementById('gruppe').value = eintrag.staffel;
+  document.getElementById('staffelnr').value = eintrag.nr;
+  scheduleAutosave();
+}
+document.getElementById('heimverein').addEventListener('change', applyStaffelForHeimverein);
 document.getElementById('gastverein').addEventListener('input', updateReportLabelFromTeams);
 
 // ---- Automatische Speicherung beim Tippen (lokal + Cloud), verzögert um nicht bei jedem Tastendruck zu speichern ----
 let autosaveTimer = null;
+let saveToastTimer = null;
+function showSaveToast(message){
+  const toast = document.getElementById('saveToast');
+  toast.textContent = message;
+  toast.classList.add('show');
+  clearTimeout(saveToastTimer);
+  saveToastTimer = setTimeout(() => toast.classList.remove('show'), 1800);
+}
+
 function scheduleAutosave(){
   clearTimeout(autosaveTimer);
   autosaveTimer = setTimeout(async () => {
     const ok = await persistActiveReport();
-    setStatus(ok ? 'Automatisch gespeichert ✓' : 'Automatisches Speichern nicht möglich – bitte "Exportieren" nutzen.');
+    if(ok){
+      showSaveToast(isGuestMode ? '✓ Deine Aufstellung ist gespeichert' : '✓ Gespeichert');
+    } else {
+      setStatus('Automatisches Speichern nicht möglich – bitte "Exportieren" nutzen.');
+    }
   }, 1200);
 }
 tbody.addEventListener('input', scheduleAutosave);
@@ -1251,7 +1304,7 @@ function applyGuestRestrictions(){
   document.querySelector('.reset-link-row').style.display = 'none';
   for(let s = 1; s <= TOTAL_STEPS; s++){
     const el = document.getElementById('wizStep' + s);
-    if(el) el.style.display = (s === 6) ? 'none' : 'block';
+    if(el) el.style.display = (s === 5 || s === 6) ? 'none' : 'block';
   }
   const table = document.getElementById('matchTable');
   table.style.display = 'table';
@@ -1485,7 +1538,7 @@ async function switchReport(newId, options){
     // Datum bei einem frischen Bericht direkt mit heute vorbelegen
     const datumInput = document.getElementById('datum');
     const heute = new Date();
-    datumInput.value = `${String(heute.getDate()).padStart(2,'0')}.${String(heute.getMonth()+1).padStart(2,'0')}.${heute.getFullYear()}`;
+    datumInput.value = `${heute.getFullYear()}-${String(heute.getMonth()+1).padStart(2,'0')}-${String(heute.getDate()).padStart(2,'0')}`;
   }
   updateReportLabelFromTeams();
   renderReportSelector();
@@ -1724,6 +1777,15 @@ function handleImportAufstellungFile(fileInput){
 }
 
 
+// Wandelt ein natives Datum (JJJJ-MM-TT) in die deutsche Schreibweise (TT.MM.JJJJ) um
+function formatDateGerman(isoDate){
+  if(!isoDate) return '';
+  const parts = isoDate.split('-');
+  if(parts.length !== 3) return isoDate;
+  const [jjjj, mm, tt] = parts;
+  return `${tt}.${mm}.${jjjj}`;
+}
+
 function buildNativePdf(){
   populatePrintLayoutData(); // aktualisiert die zugrunde liegenden Werte (Sieger/Ergebnis-Berechnung etc.)
   const { jsPDF } = window.jspdf;
@@ -1742,7 +1804,7 @@ function buildNativePdf(){
   const heim = val('heimverein') || '\u2013';
   const gast = val('gastverein') || '\u2013';
   const metaLine1 = `Bezeichnung der Staffel: ${val('gruppe') || '\u2013'}      Staffel-Nr.: ${val('staffelnr') || '\u2013'}`;
-  const metaLine2 = `Heimverein: ${heim}      Gastverein: ${gast}      Datum: ${val('datum') || '\u2013'}      Beginn: ${val('beginn') || '\u2013'}`;
+  const metaLine2 = `Heimverein: ${heim}      Gastverein: ${gast}      Datum: ${formatDateGerman(val('datum')) || '\u2013'}      Beginn: ${val('beginn') || '\u2013'}`;
   const metaLine3 = `Ort und Hallenbezeichnung der Austragungsstätte: ${val('ort') || '\u2013'}      Spieltag: ${val('spieltag') || '\u2013'}`;
   doc.text(metaLine1, 12, y); y += 5;
   doc.text(metaLine2, 12, y); y += 5;
@@ -1750,6 +1812,7 @@ function buildNativePdf(){
 
   const printLabels = { "Mixed": "GD" };
   let heimSpiele = 0, gastSpiele = 0;
+  let heimPunkteGesamt = 0, gastPunkteGesamt = 0, heimSaetzeGesamt = 0, gastSaetzeGesamt = 0;
   const bodyRows = POSITIONS.map((pos, i) => {
     const tr = tbody.children[i];
     const isDouble = DOUBLES_INDICES.has(i);
@@ -1776,6 +1839,8 @@ function buildNativePdf(){
     if(played > 0){
       if(heimSets >= 2){ ergHeim = '1'; ergGast = '0'; heimSpiele++; }
       else if(gastSets >= 2){ ergHeim = '0'; ergGast = '1'; gastSpiele++; }
+      heimPunkteGesamt += heimBaelle; gastPunkteGesamt += gastBaelle;
+      heimSaetzeGesamt += heimSets; gastSaetzeGesamt += gastSets;
     }
     return [
       printLabels[pos] || pos,
@@ -1794,6 +1859,7 @@ function buildNativePdf(){
     styles: { fontSize: 8, cellPadding: 1.5, lineColor: [0,0,0], lineWidth: 0.1, valign: 'middle', halign: 'center' },
     headStyles: { fillColor: [255,255,255], textColor: [0,0,0], fontStyle: 'bold', lineWidth: 0.1 },
     bodyStyles: { textColor: [0,0,0] },
+    footStyles: { fillColor: [240,240,240], textColor: [0,0,0], fontStyle: 'bold', lineWidth: 0.1 },
     columnStyles: {
       1: { halign: 'left', cellWidth: 45 },
       2: { halign: 'left', cellWidth: 45 }
@@ -1810,7 +1876,13 @@ function buildNativePdf(){
       ],
       ['1.', '2.', '3.', 'Heim', 'Gast', 'Heim', 'Gast', 'Heim', 'Gast']
     ],
-    body: bodyRows
+    body: bodyRows,
+    foot: [[
+      { content: 'Gesamt', colSpan: 6 },
+      String(heimPunkteGesamt), String(gastPunkteGesamt),
+      String(heimSaetzeGesamt), String(gastSaetzeGesamt),
+      String(heimSpiele), String(gastSpiele)
+    ]]
   });
 
   y = doc.lastAutoTable.finalY + 6;
