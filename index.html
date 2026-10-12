@@ -588,6 +588,21 @@
     border-radius:999px;
   }
   #printLayout{display:none;}
+  .player-limit-warning{
+    background:rgba(255,107,94,0.14);
+    border:1px solid var(--red);
+    color:#ffb3ab;
+    border-radius:14px;
+    padding:10px 14px;
+    font-size:12.5px;
+    line-height:1.5;
+    margin-bottom:14px;
+  }
+  .name-input.input-warn{
+    border-color:var(--red) !important;
+    outline:1px solid var(--red);
+    background:rgba(255,107,94,0.12) !important;
+  }
 
   @media print{
     @page{ size: landscape; margin: 10mm; }
@@ -779,6 +794,8 @@
   <div class="wizard-step" id="wizStep4" style="display:none;">
     <p class="step-intro">Schritt 4: Trag die Satzergebnisse für jede Begegnung ein.</p>
   </div>
+
+  <div id="playerLimitWarning" class="player-limit-warning" style="display:none;"></div>
 
   <table id="matchTable">
     <thead>
@@ -980,9 +997,19 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/5.0.8/jspdf.plugin.autotable.min.js"></script>
 <script>
-const POSITIONS = ["1. HD","2. HD","DD","1. HE","2. HE","3. HE","DE","Mixed"];
-const DOUBLES_INDICES = new Set([0, 1, 2, 7]); // 1. HD, 2. HD, DD, Mixed
-// Geschlecht je Position: 'm' = Herren-Kader, 'w' = Damen-Kader (jeweils für die Heim-Slots)
+// Standard-Spielfolge (gemischte Mannschaften: Herren + Damen)
+const POSITIONS_STANDARD = ["1. HD","2. HD","DD","1. HE","2. HE","3. HE","DE","Mixed"];
+const DOUBLES_INDICES_STANDARD = new Set([0, 1, 2, 7]); // 1. HD, 2. HD, DD, Mixed
+
+// Spielfolge für TuS Ascheberg M1 (Minimannschaft, Geschlecht egal): 4 Einzel, 2 Doppel, kein Mixed/DE
+const POSITIONS_M1 = ["1. Doppel","2. Doppel","1. Einzel","2. Einzel","3. Einzel","4. Einzel"];
+const DOUBLES_INDICES_M1 = new Set([0, 1]); // 1. Doppel, 2. Doppel
+const M1_TEAM_NAME = "TuS Ascheberg M1";
+
+let POSITIONS = POSITIONS_STANDARD.slice();
+let DOUBLES_INDICES = new Set(DOUBLES_INDICES_STANDARD);
+
+// Geschlecht je Position: 'm' = Herren-Kader, 'w' = Damen-Kader, 'x' = Geschlecht egal (jeweils für die Heim-Slots)
 const GENDER_MAP = {
   "1. HD": ['m','m'],
   "2. HD": ['m','m'],
@@ -992,7 +1019,35 @@ const GENDER_MAP = {
   "3. HE": ['m'],
   "DE":    ['w'],
   "Mixed": ['m','w'],
+  "1. Doppel": ['x','x'],
+  "2. Doppel": ['x','x'],
+  "1. Einzel": ['x'],
+  "2. Einzel": ['x'],
+  "3. Einzel": ['x'],
+  "4. Einzel": ['x'],
 };
+
+function getPositionSetFor(heimverein){
+  return heimverein === M1_TEAM_NAME
+    ? { positions: POSITIONS_M1, doubles: DOUBLES_INDICES_M1 }
+    : { positions: POSITIONS_STANDARD, doubles: DOUBLES_INDICES_STANDARD };
+}
+function positionsEqual(a, b){
+  return a.length === b.length && a.every((v, i) => v === b[i]);
+}
+// Baut die Spielfolge neu auf, falls sich die Positionsliste für den gewählten Heimverein ändert
+// (z. B. Wechsel von/zu TuS Ascheberg M1). Gibt true zurück, wenn neu gebaut wurde.
+function applyPositionSetForTeam(heimverein){
+  const target = getPositionSetFor(heimverein);
+  if(positionsEqual(POSITIONS, target.positions)) return false;
+  POSITIONS = target.positions.slice();
+  DOUBLES_INDICES = new Set(target.doubles);
+  tbody.innerHTML = '';
+  buildRows();
+  openRowIndex = 0;
+  applyAccordionState();
+  return true;
+}
 const TUS_MAENNER = [
   "Baab, Nathan","Beerens, Linus","Blasig, Johannes","Brügger, Jan","Contzen, Jakob",
   "Denter, Fabian","Diekmann, Felix","Entrup, Luc","Frenster, Robin","Hattrup, Ralf",
@@ -1014,6 +1069,7 @@ function buildPlayerDatalists(){
   container.innerHTML = `
     <datalist id="dl-maenner">${buildOptions(TUS_MAENNER)}</datalist>
     <datalist id="dl-frauen">${buildOptions(TUS_FRAUEN)}</datalist>
+    <datalist id="dl-alle">${buildOptions([...TUS_MAENNER, ...TUS_FRAUEN].sort((a,b) => a.localeCompare(b, 'de')))}</datalist>
   `;
   document.body.appendChild(container);
 }
@@ -1027,15 +1083,16 @@ function buildRows(){
     tr.dataset.row = i;
     const isDouble = DOUBLES_INDICES.has(i);
     const genders = GENDER_MAP[pos] || [];
-    const listFor = g => g === 'm' ? 'dl-maenner' : (g === 'w' ? 'dl-frauen' : '');
+    const listFor = g => g === 'm' ? 'dl-maenner' : (g === 'w' ? 'dl-frauen' : (g === 'x' ? 'dl-alle' : ''));
+    const labelFor = g => g === 'w' ? 'Spielerin' : (g === 'x' ? 'Spieler(in)' : 'Spieler');
     const heimCell = isDouble
-      ? `<input type="text" class="name-input" data-field="heimNamen1" list="${listFor(genders[0])}" enterkeyhint="next" placeholder="${genders[0]==='w' ? 'Spielerin' : 'Spieler'} 1">
-         <input type="text" class="name-input" data-field="heimNamen2" list="${listFor(genders[1])}" enterkeyhint="next" placeholder="${genders[1]==='w' ? 'Spielerin' : 'Spieler'} 2">`
-      : `<input type="text" class="name-input" data-field="heimNamen" list="${listFor(genders[0])}" enterkeyhint="next" placeholder="${genders[0]==='w' ? 'Spielerin' : 'Spieler'}">`;
+      ? `<input type="text" class="name-input" data-field="heimNamen1" list="${listFor(genders[0])}" enterkeyhint="next" placeholder="${labelFor(genders[0])} 1">
+         <input type="text" class="name-input" data-field="heimNamen2" list="${listFor(genders[1])}" enterkeyhint="next" placeholder="${labelFor(genders[1])} 2">`
+      : `<input type="text" class="name-input" data-field="heimNamen" list="${listFor(genders[0])}" enterkeyhint="next" placeholder="${labelFor(genders[0])}">`;
     const gastCell = isDouble
-      ? `<input type="text" class="name-input" data-field="gastNamen1" enterkeyhint="next" placeholder="${genders[0]==='w' ? 'Spielerin' : 'Spieler'} 1">
-         <input type="text" class="name-input" data-field="gastNamen2" enterkeyhint="next" placeholder="${genders[1]==='w' ? 'Spielerin' : 'Spieler'} 2">`
-      : `<input type="text" class="name-input" data-field="gastNamen" enterkeyhint="next" placeholder="${genders[0]==='w' ? 'Spielerin' : 'Spieler'}">`;
+      ? `<input type="text" class="name-input" data-field="gastNamen1" enterkeyhint="next" placeholder="${labelFor(genders[0])} 1">
+         <input type="text" class="name-input" data-field="gastNamen2" enterkeyhint="next" placeholder="${labelFor(genders[1])} 2">`
+      : `<input type="text" class="name-input" data-field="gastNamen" enterkeyhint="next" placeholder="${labelFor(genders[0])}">`;
     tr.innerHTML = `
       <td class="pos-cell" onclick="toggleRow(${i})">
         <span class="pos-left"><span class="chevron">▾</span>${pos}</span>
@@ -1174,12 +1231,12 @@ function populatePrintLayout(){
     const tr = tbody.children[i];
     const isDouble = DOUBLES_INDICES.has(i);
     const get = f => tr.querySelector(`[data-field=${f}]`);
-    const heimNamen = isDouble
+    const heimNamen = (isDouble
       ? [get('heimNamen1').value, get('heimNamen2').value].filter(Boolean).join('<br>')
-      : (get('heimNamen') ? get('heimNamen').value : '');
-    const gastNamen = isDouble
+      : (get('heimNamen') ? get('heimNamen').value : '')) || 'kein Spieler';
+    const gastNamen = (isDouble
       ? [get('gastNamen1').value, get('gastNamen2').value].filter(Boolean).join('<br>')
-      : (get('gastNamen') ? get('gastNamen').value : '');
+      : (get('gastNamen') ? get('gastNamen').value : '')) || 'kein Spieler';
 
     const sets = [['s1h','s1g'],['s2h','s2g'],['s3h','s3g']];
     let heimSets = 0, gastSets = 0, heimBaelle = 0, gastBaelle = 0, played = 0;
@@ -1241,6 +1298,56 @@ function populatePrintLayout(){
   gastSigImg.style.visibility = gastSigData ? 'visible' : 'hidden';
 }
 
+// ---- Spieler-Einsatz-Grenzen: max. 2 Spiele pro Person, nicht zweimal im selben Doppel ----
+function normalizePlayerName(n){ return (n || '').trim().toLowerCase(); }
+
+function computePlayerLimitIssues(side){
+  const messages = [];
+  const counts = {}; // normalisierter Name -> { display, count, inputs:[] }
+  [...tbody.children].forEach(tr => {
+    const inputs = [...tr.querySelectorAll(`[data-field^="${side}Namen"]`)];
+    if(inputs.length === 2){
+      const a = inputs[0].value.trim(), b = inputs[1].value.trim();
+      const isSelfDup = a && b && normalizePlayerName(a) === normalizePlayerName(b);
+      inputs.forEach(inp => inp.classList.toggle('input-warn', !!isSelfDup));
+      if(isSelfDup){
+        const posLabel = (tr.querySelector('.pos-cell') || {}).textContent || '';
+        messages.push(`${a} steht im selben Doppel zweimal (${posLabel.trim()})`);
+      }
+    }
+    inputs.forEach(inp => {
+      const name = inp.value.trim();
+      if(!name) return;
+      const key = normalizePlayerName(name);
+      if(!counts[key]) counts[key] = { display: name, count: 0, inputs: [] };
+      counts[key].count++;
+      counts[key].inputs.push(inp);
+    });
+  });
+  Object.values(counts).forEach(entry => {
+    const tooMany = entry.count > 2;
+    entry.inputs.forEach(inp => inp.classList.toggle('input-warn', inp.classList.contains('input-warn') || tooMany));
+    if(tooMany) messages.push(`${entry.display} ist ${entry.count}x eingetragen (max. 2 Spiele erlaubt)`);
+  });
+  return messages;
+}
+
+function checkPlayerLimits(){
+  tbody.querySelectorAll('.name-input.input-warn').forEach(inp => inp.classList.remove('input-warn'));
+  const messages = [...computePlayerLimitIssues('heim'), ...computePlayerLimitIssues('gast')];
+  const warnEl = document.getElementById('playerLimitWarning');
+  if(warnEl){
+    if(messages.length){
+      warnEl.innerHTML = messages.map(m => '⚠️ ' + m).join('<br>');
+      warnEl.style.display = 'block';
+    } else {
+      warnEl.innerHTML = '';
+      warnEl.style.display = 'none';
+    }
+  }
+  return messages;
+}
+
 function computeAll(){
   let heimPunkte = 0, gastPunkte = 0;
   let heimBaelleGesamt = 0, gastBaelleGesamt = 0;
@@ -1273,6 +1380,7 @@ function computeAll(){
   } else {
     banner.innerHTML = 'Unentschieden (Stand)';
   }
+  checkPlayerLimits();
 }
 
 tbody.addEventListener('input', computeAll);
@@ -1292,6 +1400,7 @@ tbody.addEventListener('keydown', e => {
     e.target.blur(); // letztes Namensfeld der Begegnung -> Tastatur schließen
   }
 });
+document.getElementById('heimverein').addEventListener('change', () => applyPositionSetForTeam(document.getElementById('heimverein').value));
 document.getElementById('heimverein').addEventListener('input', computeAll);
 document.getElementById('heimverein').addEventListener('change', computeAll);
 document.getElementById('gastverein').addEventListener('input', computeAll);
@@ -1433,6 +1542,7 @@ function collectData(){
 function applyData(data){
   if(!data) return;
   document.getElementById('heimverein').value = data.heimverein || '';
+  applyPositionSetForTeam(data.heimverein || '');
   document.getElementById('gastverein').value = data.gastverein || '';
   document.getElementById('gruppe').value = data.gruppe || '';
   document.getElementById('staffelnr').value = data.staffelnr || '';
@@ -1884,12 +1994,12 @@ function buildNativePdf(){
     const tr = tbody.children[i];
     const isDouble = DOUBLES_INDICES.has(i);
     const get = f => tr.querySelector(`[data-field=${f}]`);
-    const heimNamen = isDouble
+    const heimNamen = (isDouble
       ? [get('heimNamen1').value, get('heimNamen2').value].filter(Boolean).join('\n')
-      : (get('heimNamen') ? get('heimNamen').value : '');
-    const gastNamen = isDouble
+      : (get('heimNamen') ? get('heimNamen').value : '')) || 'kein Spieler';
+    const gastNamen = (isDouble
       ? [get('gastNamen1').value, get('gastNamen2').value].filter(Boolean).join('\n')
-      : (get('gastNamen') ? get('gastNamen').value : '');
+      : (get('gastNamen') ? get('gastNamen').value : '')) || 'kein Spieler';
     const sets = [['s1h','s1g'],['s2h','s2g'],['s3h','s3g']];
     let heimSets = 0, gastSets = 0, heimBaelle = 0, gastBaelle = 0, played = 0;
     const satzTexte = sets.map(([hf, gf]) => {
@@ -2116,12 +2226,20 @@ function validateStep(step){
     if(!anyHeimName){
       return confirm('Es ist noch keine Heim-Aufstellung eingetragen (z. B. weil eine Mannschaft kampflos aufgibt). Trotzdem fortfahren?');
     }
+    const issues = computePlayerLimitIssues('heim');
+    if(issues.length){
+      return confirm('Achtung, Einsatz-Grenze überschritten:\n\n' + issues.join('\n') + '\n\nTrotzdem fortfahren?');
+    }
     return true;
   }
   if(step === 3){
     const anyGastName = [...tbody.querySelectorAll('.name-input')].some(inp => (inp.dataset.field || '').startsWith('gastNamen') && inp.value.trim() !== '');
     if(!anyGastName){
       return confirm('Es sind noch keine Gast-Spieler eingetragen (z. B. weil der Gastverein kampflos aufgibt). Trotzdem fortfahren?');
+    }
+    const issues = computePlayerLimitIssues('gast');
+    if(issues.length){
+      return confirm('Achtung, Einsatz-Grenze überschritten:\n\n' + issues.join('\n') + '\n\nTrotzdem fortfahren?');
     }
     return true;
   }
